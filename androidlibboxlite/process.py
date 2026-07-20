@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
+import threading
 from typing import Mapping, Sequence
 
 from .errors import ReleaseError
@@ -27,6 +29,8 @@ def run(
     cwd: Path,
     env: Mapping[str, str],
     timeout: int,
+    *,
+    stream_output: bool = False,
 ) -> ProcessResult:
     arguments = tuple(argv)
     if not arguments or len(arguments) > 4096:
@@ -52,6 +56,14 @@ def run(
         environment[key] = value
 
     creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    if stream_output:
+        return _run_streaming(
+            arguments,
+            directory,
+            environment,
+            timeout,
+            creation_flags,
+        )
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         try:
             process = subprocess.Popen(
@@ -85,12 +97,108 @@ def run_checked(
     env: Mapping[str, str],
     timeout: int,
     failure_code: str,
+    *,
+    stream_output: bool = False,
 ) -> ProcessResult:
-    result = run(argv, cwd, env, timeout)
+    result = run(argv, cwd, env, timeout, stream_output=stream_output)
     if result.exit_code != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.exit_code}"
         raise ReleaseError(failure_code, detail[-4096:])
     return result
+
+
+def _run_streaming(
+    arguments: tuple[str, ...],
+    directory: Path,
+    environment: Mapping[str, str],
+    timeout: int,
+    creation_flags: int,
+) -> ProcessResult:
+    try:
+        process = subprocess.Popen(
+            arguments,
+            cwd=directory,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            close_fds=True,
+            start_new_session=os.name != "nt",
+            creationflags=creation_flags,
+        )
+    except OSError as failure:
+        raise ReleaseError("PROCESS_START_FAILED", f"cannot start {arguments[0]}: {failure}") from failure
+    if process.stdout is None or process.stderr is None:
+        _terminate_process_group(process)
+        raise ReleaseError("PROCESS_START_FAILED", "streaming process pipes are unavailable")
+
+    stdout = bytearray()
+    stderr = bytearray()
+    overflows: list[str] = []
+    pump_failures: list[BaseException] = []
+    threads = (
+        threading.Thread(
+            target=_pump_output,
+            args=(process.stdout, sys.stdout, stdout, "stdout", overflows, pump_failures),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=_pump_output,
+            args=(process.stderr, sys.stderr, stderr, "stderr", overflows, pump_failures),
+            daemon=True,
+        ),
+    )
+    for thread in threads:
+        thread.start()
+    try:
+        exit_code = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as failure:
+        _terminate_process_group(process)
+        process.wait(timeout=10)
+        for thread in threads:
+            thread.join(timeout=10)
+        raise ReleaseError("PROCESS_TIMEOUT", f"process exceeded {timeout} seconds: {arguments[0]}") from failure
+    for thread in threads:
+        thread.join(timeout=10)
+    if any(thread.is_alive() for thread in threads):
+        raise ReleaseError("PROCESS_OUTPUT_FAILED", "streaming output pump did not stop")
+    if pump_failures:
+        raise ReleaseError("PROCESS_OUTPUT_FAILED", str(pump_failures[0]))
+    if overflows:
+        raise ReleaseError("PROCESS_OUTPUT_LIMIT", f"{overflows[0]} exceeded {_MAX_OUTPUT_BYTES} bytes")
+    return ProcessResult(
+        arguments,
+        exit_code,
+        stdout.decode("utf-8", errors="replace"),
+        stderr.decode("utf-8", errors="replace"),
+    )
+
+
+def _pump_output(
+    stream: object,
+    sink: object,
+    captured: bytearray,
+    name: str,
+    overflows: list[str],
+    failures: list[BaseException],
+) -> None:
+    try:
+        while True:
+            chunk = stream.read1(64 * 1024)
+            if not chunk:
+                break
+            sink.write(chunk.decode("utf-8", errors="replace"))
+            sink.flush()
+            remaining = _MAX_OUTPUT_BYTES - len(captured)
+            if remaining > 0:
+                captured.extend(chunk[:remaining])
+            if len(chunk) > remaining and name not in overflows:
+                overflows.append(name)
+    except BaseException as failure:
+        failures.append(failure)
+    finally:
+        stream.close()
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:

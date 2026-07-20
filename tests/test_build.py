@@ -2,11 +2,13 @@ import json
 import os
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from androidlibboxlite.build import (
     build_command,
     clean_build_environment,
     host_tool_environment,
+    run_libbox_command,
 )
 from androidlibboxlite.lockfile import ReleaseLock
 from tests.fixtures import release_lock_dict
@@ -57,6 +59,23 @@ class BuildCommandTest(unittest.TestCase):
         self.assertEqual("0", host_environment["CGO_ENABLED"])
         self.assertEqual("1", android_environment["CGO_ENABLED"])
         self.assertEqual("local", host_environment["GOTOOLCHAIN"])
+
+    def test_libbox_build_streams_verbose_process_output(self) -> None:
+        command = ("/tools/gomobile", "bind", "-v")
+        source = Path("/source")
+        environment = {"CGO_ENABLED": "1"}
+
+        with mock.patch("androidlibboxlite.build.run_checked") as execute:
+            run_libbox_command(command, source, environment)
+
+        execute.assert_called_once_with(
+            command,
+            source,
+            environment,
+            90 * 60,
+            "LIBBOX_BUILD_FAILED",
+            stream_output=True,
+        )
 
 
 if __name__ == "__main__":

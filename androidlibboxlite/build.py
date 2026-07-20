@@ -96,6 +96,21 @@ def host_tool_environment(android_environment: dict[str, str]) -> dict[str, str]
     return environment
 
 
+def run_libbox_command(
+    command: tuple[str, ...],
+    source: Path,
+    environment: dict[str, str],
+) -> None:
+    run_checked(
+        command,
+        source,
+        environment,
+        90 * 60,
+        "LIBBOX_BUILD_FAILED",
+        stream_output=True,
+    )
+
+
 def build_libbox(
     lock: ReleaseLock,
     workspace: Path,
@@ -200,7 +215,7 @@ def build_libbox(
     run_checked([str(gomobile), "init"], workspace, host_environment, 10 * 60, "GOMOBILE_INIT_FAILED")
     raw_aar = output / "libbox.aar"
     command = build_command(lock, gomobile, source, raw_aar)
-    run_checked(command, source, environment, 90 * 60, "LIBBOX_BUILD_FAILED")
+    run_libbox_command(command, source, environment)
     sources = output / "libbox-sources.jar"
     if not raw_aar.is_file() or not sources.is_file():
         raise ReleaseError("LIBBOX_OUTPUT_INVALID", "gomobile did not create both release inputs")
