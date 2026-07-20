@@ -1,0 +1,189 @@
+name: Build and release libbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: Canonical sing-box release tag
+        required: true
+        type: string
+
+concurrency:
+  group: androidlibboxlite-release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      prerelease: ${{ steps.identity.outputs.prerelease }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Validate release identity
+        id: identity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/validate_release.py --tag "${{ inputs.upstream_tag }}" --github-output "${GITHUB_OUTPUT}"
+
+      - name: Restore locked downloads
+        id: restore-downloads
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: .toolchains/downloads
+          key: androidlibboxlite-downloads-${{ hashFiles('locks/*.json') }}
+          restore-keys: |
+            androidlibboxlite-downloads-
+
+      - name: Build libbox once
+        run: |
+          python scripts/build_libbox.py \
+            --lock "${{ steps.identity.outputs.lock }}" \
+            --workspace "${RUNNER_TEMP}/libbox-work" \
+            --output "${RUNNER_TEMP}/libbox-raw" \
+            --cache .toolchains/downloads
+
+      - name: Normalize and verify release assets
+        run: |
+          mkdir -p "${RUNNER_TEMP}/libbox-release"
+          python scripts/normalize_aar.py \
+            --lock "${{ steps.identity.outputs.lock }}" \
+            --input "${RUNNER_TEMP}/libbox-raw/libbox.aar" \
+            --output "${RUNNER_TEMP}/libbox-release/libbox.aar"
+          cp "${RUNNER_TEMP}/libbox-raw/libbox-sources.jar" "${RUNNER_TEMP}/libbox-release/libbox-sources.jar"
+          python scripts/verify_artifacts.py \
+            --lock "${{ steps.identity.outputs.lock }}" \
+            --aar "${RUNNER_TEMP}/libbox-release/libbox.aar" \
+            --sources "${RUNNER_TEMP}/libbox-release/libbox-sources.jar" \
+            --go "${RUNNER_TEMP}/libbox-work/tools/go/bin/go" \
+            --report "${RUNNER_TEMP}/libbox-verification.json"
+          python scripts/create_manifest.py \
+            --lock "${{ steps.identity.outputs.lock }}" \
+            --aar "${RUNNER_TEMP}/libbox-release/libbox.aar" \
+            --sources "${RUNNER_TEMP}/libbox-release/libbox-sources.jar" \
+            --verification "${RUNNER_TEMP}/libbox-verification.json" \
+            --output "${RUNNER_TEMP}/libbox-release"
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: libbox-release
+          path: |
+            ${{ runner.temp }}/libbox-release/libbox.aar
+            ${{ runner.temp }}/libbox-release/libbox-sources.jar
+            ${{ runner.temp }}/libbox-release/build-manifest.json
+            ${{ runner.temp }}/libbox-release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Save locked downloads
+        if: ${{ always() }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: .toolchains/downloads
+          key: androidlibboxlite-downloads-${{ hashFiles('locks/*.json') }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: libbox-release
+          path: ${{ runner.temp }}/libbox-release
+
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: |
+            ${{ runner.temp }}/libbox-release/libbox.aar
+            ${{ runner.temp }}/libbox-release/libbox-sources.jar
+            ${{ runner.temp }}/libbox-release/build-manifest.json
+            ${{ runner.temp }}/libbox-release/SHA256SUMS
+
+      - name: Create immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "RELEASE_ALREADY_EXISTS: ${RELEASE_TAG}" >&2
+            exit 2
+          fi
+          args=(release create "${RELEASE_TAG}" --target "${GITHUB_SHA}" --title "${RELEASE_TAG}" --verify-tag=false)
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          gh "${args[@]}" \
+            "${RUNNER_TEMP}/libbox-release/libbox.aar" \
+            "${RUNNER_TEMP}/libbox-release/libbox-sources.jar" \
+            "${RUNNER_TEMP}/libbox-release/build-manifest.json" \
+            "${RUNNER_TEMP}/libbox-release/SHA256SUMS"
+
+  report-failure:
+    if: ${{ always() && needs.build.outputs.tag != '' && (needs.build.result == 'failure' || needs.release.result == 'failure') }}
+    needs:
+      - build
+      - release
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update release failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="build: ${RELEASE_TAG} automatic release failed"
+          body="Automatic release failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          issue="$(gh issue list --state open --search "${title} in:title" --json number --jq '.[0].number // empty')"
+          if [[ -n "${issue}" ]]; then
+            gh issue comment "${issue}" --body "${body}"
+          else
+            gh issue create --title "${title}" --body "${body}" --label build
+          fi
+
+  close-failure-issue:
+    needs:
+      - build
+      - release
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Close resolved release failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="build: ${RELEASE_TAG} automatic release failed"
+          issue="$(gh issue list --state open --search "${title} in:title" --json number --jq '.[0].number // empty')"
+          if [[ -n "${issue}" ]]; then
+            gh issue close "${issue}" --comment "Automatic release completed successfully."
+          fi

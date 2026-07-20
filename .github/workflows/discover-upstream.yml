@@ -1,0 +1,73 @@
+name: Discover upstream releases
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: androidlibboxlite-discovery
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Restore locked downloads
+        id: restore-downloads
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: .toolchains/downloads
+          key: androidlibboxlite-downloads-${{ hashFiles('locks/*.json') }}
+          restore-keys: |
+            androidlibboxlite-downloads-
+
+      - name: Resolve, commit, and dispatch every pending tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pending="${RUNNER_TEMP}/androidlibboxlite-pending.tsv"
+          python scripts/discover_upstream.py --format tsv > "${pending}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          while IFS=$'\t' read -r tag commit; do
+            if [[ -z "${tag}" ]]; then
+              continue
+            fi
+            lock="locks/${tag}.json"
+            if [[ ! -f "${lock}" ]]; then
+              python scripts/resolve_toolchain.py \
+                --tag "${tag}" \
+                --commit "${commit}" \
+                --output "${lock}" \
+                --cache .toolchains/downloads
+              git add -- "${lock}"
+              git commit -m "build: lock sing-box ${tag} inputs"
+              git push origin HEAD:main
+            fi
+            gh workflow run build-release.yml --ref main -f upstream_tag="${tag}"
+          done < "${pending}"
+
+      - name: Save locked downloads
+        if: ${{ always() }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: .toolchains/downloads
+          key: androidlibboxlite-downloads-${{ hashFiles('locks/*.json') }}
