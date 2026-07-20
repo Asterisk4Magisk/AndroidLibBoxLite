@@ -16,7 +16,7 @@ from androidlibboxlite.semver import SemVer, discover_unreleased
 def main() -> int:
     parser = argparse.ArgumentParser(description="发现尚未发布的 sing-box 官方版本")
     parser.add_argument("--baseline", default="v1.14.0-alpha.47")
-    parser.add_argument("--provider-owner", default="whalechoi")
+    parser.add_argument("--provider-owner", default="Asterisk4Magisk")
     parser.add_argument("--provider-repo", default="AndroidLibBoxLite")
     parser.add_argument("--format", choices=("json", "tsv"), default="json")
     args = parser.parse_args()

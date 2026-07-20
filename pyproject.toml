@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "GPL-3.0-only"
 authors = [
-    { name = "whalechoi" },
+    { name = "Asterisk4Magisk" },
 ]
 dependencies = []
 
