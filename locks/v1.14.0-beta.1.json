@@ -1,0 +1,116 @@
+{
+  "libbox": {
+    "abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86",
+      "x86_64"
+    ],
+    "androidApi": 23,
+    "ldflags": "-X github.com/sagernet/sing-box/constant.Version=1.14.0-beta.1 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0 -s -w -buildid=",
+    "tags": [
+      "with_gvisor",
+      "with_quic",
+      "with_dhcp",
+      "with_wireguard",
+      "with_utls",
+      "with_clash_api",
+      "with_tailscale",
+      "with_naive_outbound",
+      "with_openvpn",
+      "with_openconnect",
+      "badlinkname",
+      "tfogo_checklinkname0",
+      "ts_omit_logtail",
+      "ts_omit_ssh",
+      "ts_omit_drive",
+      "ts_omit_taildrop",
+      "ts_omit_webclient",
+      "ts_omit_doctor",
+      "ts_omit_capture",
+      "ts_omit_kube",
+      "ts_omit_aws",
+      "ts_omit_synology",
+      "ts_omit_bird"
+    ]
+  },
+  "schema": 1,
+  "source": {
+    "archive": {
+      "sha1": null,
+      "sha256": "c62e302ab18acd4555749882f437be980231a4abce78b1b49306cb3582749fd7",
+      "size": 2645747,
+      "url": "https://codeload.github.com/SagerNet/sing-box/zip/8bc6787c7ff785e5f6343241affdadd5ca239bd7"
+    },
+    "commit": "8bc6787c7ff785e5f6343241affdadd5ca239bd7",
+    "commitTime": 1784812860,
+    "repository": "SagerNet/sing-box",
+    "tag": "v1.14.0-beta.1"
+  },
+  "toolchain": {
+    "android": {
+      "buildTools": {
+        "archive": {
+          "sha1": "70954e99f4c3d9d46ee70fa32624672fe7cd6ebe",
+          "sha256": "01af179347cbcd9c208b7f8171f7b21f6dd1d2f85bcd15e88caa51d5d7b86060",
+          "size": 66135704,
+          "url": "https://dl.google.com/android/repository/build-tools_r37_linux.zip"
+        },
+        "package": "build-tools;37.0.0"
+      },
+      "commandLineTools": {
+        "archive": {
+          "sha1": "040d3996a65543d22ec4bf73e4c37aa37a8d4af4",
+          "sha256": "4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583",
+          "size": 181833628,
+          "url": "https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip"
+        },
+        "package": "cmdline-tools;22.0"
+      },
+      "ndk": {
+        "archive": {
+          "sha1": "87e2bb7e9be5d6a1c6cdf5ec40dd4e0c6d07c30b",
+          "sha256": "4abbbcdc842f3d4879206e9695d52709603e52dd68d3c1fff04b3b5e7a308ecf",
+          "size": 783549481,
+          "url": "https://dl.google.com/android/repository/android-ndk-r29-linux.zip"
+        },
+        "package": "ndk;29.0.14206865"
+      },
+      "platform": {
+        "archive": {
+          "sha1": "027fede3de6aa1649115bbd0bffff30ccd51c9a0",
+          "sha256": "4b4bcddead3319708275c54c76294707bfaa953d767e34f1a5b599f3edd0076c",
+          "size": 70433421,
+          "url": "https://dl.google.com/android/repository/platform-23_r03.zip"
+        },
+        "package": "platforms;android-23"
+      },
+      "repository": "https://dl.google.com/android/repository/repository2-3.xml"
+    },
+    "go": {
+      "archive": {
+        "sha1": null,
+        "sha256": "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053",
+        "size": 66879095,
+        "url": "https://go.dev/dl/go1.26.5.linux-amd64.tar.gz"
+      },
+      "version": "go1.26.5"
+    },
+    "gomobile": {
+      "module": "github.com/sagernet/gomobile",
+      "sum": "h1:foTOGKJetah9VwaJl1XJx5TswIAVg8NfYmHOhrOc95I=",
+      "version": "v0.1.13"
+    },
+    "jdk": {
+      "archive": {
+        "sha1": null,
+        "sha256": "69264a7a211bf5029830d07bc3370f879769d62ebc5b5488e90c9343a2da0e1f",
+        "size": 141282180,
+        "url": "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.3%2B9/OpenJDK25U-jdk_x64_linux_hotspot_25.0.3_9.tar.gz"
+      },
+      "vendor": "Eclipse Temurin",
+      "version": "25.0.3+9"
+    }
+  },
+  "workflowCommit": "59f24e78120b249d24a6a23afee944143b685cc6"
+}
