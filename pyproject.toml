@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Reproducible Android libbox release tooling for the Asterisk app family"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "GPL-3.0-only"
+license = "LGPL-3.0-only"
 authors = [
     { name = "Asterisk4Magisk" },
 ]
