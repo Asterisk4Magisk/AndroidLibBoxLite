@@ -224,7 +224,7 @@ def resolve_release_lock(
     android_xml = metadata.bytes(ANDROID_REPOSITORY_URL, 8 * 1024 * 1024)
     android = parse_android_repository(android_xml)
     source_archive = cache.pin(
-        f"https://codeload.github.com/SagerNet/sing-box/zip/{commit}",
+        f"https://codeload.github.com/reF1nd/sing-box/zip/{commit}",
         None,
         None,
     )
@@ -238,7 +238,7 @@ def resolve_release_lock(
     lock = ReleaseLock(
         schema=LOCK_SCHEMA,
         source=SourcePin(
-            repository="SagerNet/sing-box",
+            repository="reF1nd/sing-box",
             tag=tag,
             commit=commit,
             commit_time=commit_time,

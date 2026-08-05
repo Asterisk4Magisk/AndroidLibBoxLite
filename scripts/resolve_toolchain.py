@@ -33,10 +33,10 @@ def _git_head() -> str:
 
 def _verify_upstream(tag: str, commit: str) -> int:
     client = GitHubClient()
-    matches = [item for item in client.iter_tags("SagerNet", "sing-box") if item.name == tag]
+    matches = [item for item in client.iter_tags("reF1nd", "sing-box") if item.name == tag]
     if len(matches) != 1 or matches[0].commit != commit:
         raise ReleaseError("UPSTREAM_TAG_MOVED", f"{tag} does not resolve to {commit}")
-    return client.commit_timestamp("SagerNet", "sing-box", commit)
+    return client.commit_timestamp("reF1nd", "sing-box", commit)
 
 
 def _write_immutable(path: Path, lock: ReleaseLock) -> None:

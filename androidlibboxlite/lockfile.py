@@ -200,8 +200,8 @@ class ReleaseLock:
         source_raw = _mapping(root["source"], "source")
         _exact_keys(source_raw, {"repository", "tag", "commit", "commitTime", "archive"}, "source")
         repository = _string(source_raw["repository"], "source.repository")
-        if repository != "SagerNet/sing-box":
-            _policy_error("source repository must be SagerNet/sing-box")
+        if repository != "reF1nd/sing-box":
+            _policy_error("source repository must be reF1nd/sing-box")
         tag = _string(source_raw["tag"], "source.tag")
         SemVer.parse(tag)
         commit = _sha1(source_raw["commit"], "source.commit")

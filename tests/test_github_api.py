@@ -24,7 +24,7 @@ def response(payload: object, link: str | None = None) -> HttpResponse:
 
 class GitHubClientTest(unittest.TestCase):
     def test_reads_every_tag_page_and_release(self) -> None:
-        first = "https://api.github.com/repos/SagerNet/sing-box/tags?per_page=100"
+        first = "https://api.github.com/repos/reF1nd/sing-box/tags?per_page=100"
         second = first + "&page=2"
         releases = "https://api.github.com/repos/Asterisk4Magisk/AndroidLibBoxLite/releases?per_page=100"
         transport = FakeTransport(
@@ -46,7 +46,7 @@ class GitHubClientTest(unittest.TestCase):
 
         self.assertEqual(
             ["v1.14.0-alpha.47", "v1.14.0-alpha.48"],
-            [item.name for item in client.iter_tags("SagerNet", "sing-box")],
+            [item.name for item in client.iter_tags("reF1nd", "sing-box")],
         )
         self.assertEqual(
             {"v1.14.0-alpha.47"},
@@ -54,7 +54,7 @@ class GitHubClientTest(unittest.TestCase):
         )
 
     def test_rejects_untrusted_pagination_host(self) -> None:
-        first = "https://api.github.com/repos/SagerNet/sing-box/tags?per_page=100"
+        first = "https://api.github.com/repos/reF1nd/sing-box/tags?per_page=100"
         transport = FakeTransport(
             {
                 first: response([], '<https://example.invalid/steal>; rel="next"'),
@@ -62,20 +62,20 @@ class GitHubClientTest(unittest.TestCase):
         )
 
         with self.assertRaises(ReleaseError) as caught:
-            list(GitHubClient(transport=transport).iter_tags("SagerNet", "sing-box"))
+            list(GitHubClient(transport=transport).iter_tags("reF1nd", "sing-box"))
 
         self.assertEqual("GITHUB_PAGINATION_INVALID", caught.exception.code)
 
     def test_reads_commit_timestamp_as_utc_epoch(self) -> None:
         commit = "a" * 40
-        url = f"https://api.github.com/repos/SagerNet/sing-box/git/commits/{commit}"
+        url = f"https://api.github.com/repos/reF1nd/sing-box/git/commits/{commit}"
         client = GitHubClient(
             transport=FakeTransport(
                 {url: response({"committer": {"date": "2026-07-20T00:00:00Z"}})}
             )
         )
 
-        self.assertEqual(1784505600, client.commit_timestamp("SagerNet", "sing-box", commit))
+        self.assertEqual(1784505600, client.commit_timestamp("reF1nd", "sing-box", commit))
 
 
 if __name__ == "__main__":
