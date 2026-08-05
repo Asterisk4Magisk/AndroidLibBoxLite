@@ -14,7 +14,7 @@ def release_lock_dict() -> dict[str, object]:
     return {
         "schema": 1,
         "source": {
-            "repository": "SagerNet/sing-box",
+            "repository": "reF1nd/sing-box",
             "tag": "v1.14.0-alpha.47",
             "commit": "37b4386bddb143e0780435c467cd2c5f1250a4ff",
             "commitTime": 1784505600,

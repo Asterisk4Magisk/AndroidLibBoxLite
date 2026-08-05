@@ -22,7 +22,7 @@ def main() -> int:
     args = parser.parse_args()
 
     client = GitHubClient()
-    tags = client.iter_tags("SagerNet", "sing-box")
+    tags = client.iter_tags("reF1nd", "sing-box")
     released = client.published_release_tags(args.provider_owner, args.provider_repo)
     pending = discover_unreleased(tags, released, SemVer.parse(args.baseline))
     if args.format == "tsv":
