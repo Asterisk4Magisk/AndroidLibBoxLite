@@ -11,6 +11,7 @@ if __package__ in (None, ""):
 from androidlibboxlite.errors import ReleaseError
 from androidlibboxlite.github_api import GitHubClient
 from androidlibboxlite.release import validate_release_identity
+from androidlibboxlite.upstream import UPSTREAM_NAME, UPSTREAM_OWNER
 
 
 def main() -> int:
@@ -21,11 +22,19 @@ def main() -> int:
     args = parser.parse_args()
     try:
         client = GitHubClient()
-        matches = [item for item in client.iter_tags("reF1nd", "sing-box") if item.name == args.tag]
+        matches = [
+            item
+            for item in client.iter_tags(UPSTREAM_OWNER, UPSTREAM_NAME)
+            if item.name == args.tag
+        ]
         if len(matches) != 1:
             raise ReleaseError("UPSTREAM_TAG_MOVED", f"upstream tag is missing or ambiguous: {args.tag}")
         identity = validate_release_identity(args.tag, args.locks, matches[0].commit)
-        timestamp = client.commit_timestamp("reF1nd", "sing-box", matches[0].commit)
+        timestamp = client.commit_timestamp(
+            UPSTREAM_OWNER,
+            UPSTREAM_NAME,
+            matches[0].commit,
+        )
         if timestamp != identity.lock.source.commit_time:
             raise ReleaseError("UPSTREAM_TAG_MOVED", f"upstream timestamp differs for {args.tag}")
         with args.github_output.open("a", encoding="utf-8", newline="\n") as output:

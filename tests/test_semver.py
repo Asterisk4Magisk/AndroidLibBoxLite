@@ -34,18 +34,22 @@ class SemVerTest(unittest.TestCase):
         tags = [
             GitTag("v1.14.0", "c" * 40),
             GitTag("not-a-release", "d" * 40),
-            GitTag("v1.14.0-alpha.48", "b" * 40),
-            GitTag("v1.14.0-alpha.47", "a" * 40),
+            GitTag("v1.14.0-beta.6-reF1nd", "b" * 40),
+            GitTag("v1.14.0-beta.5-reF1nd", "a" * 40),
+            GitTag("v1.14.0-beta.4-reF1nd", "f" * 40),
             GitTag("v1.13.9", "e" * 40),
         ]
 
         result = discover_unreleased(
             tags,
-            {"v1.14.0-alpha.47"},
-            SemVer.parse("v1.14.0-alpha.47"),
+            {"v1.14.0-beta.5-reF1nd"},
+            SemVer.parse("v1.14.0-beta.5-reF1nd"),
         )
 
-        self.assertEqual(["v1.14.0-alpha.48", "v1.14.0"], [item.name for item in result])
+        self.assertEqual(
+            ["v1.14.0-beta.6-reF1nd", "v1.14.0"],
+            [item.name for item in result],
+        )
 
     def test_rejects_conflicting_duplicate_tag_objects(self) -> None:
         with self.assertRaises(ReleaseError) as caught:

@@ -32,6 +32,7 @@ from .lockfile import (
     ToolchainPin,
     libbox_ldflags,
 )
+from .upstream import UPSTREAM_REPOSITORY, source_archive_url
 
 
 ANDROID_REPOSITORY_URL = "https://dl.google.com/android/repository/repository2-3.xml"
@@ -223,11 +224,7 @@ def resolve_release_lock(
     )
     android_xml = metadata.bytes(ANDROID_REPOSITORY_URL, 8 * 1024 * 1024)
     android = parse_android_repository(android_xml)
-    source_archive = cache.pin(
-        f"https://codeload.github.com/reF1nd/sing-box/zip/{commit}",
-        None,
-        None,
-    )
+    source_archive = cache.pin(source_archive_url(commit), None, None)
 
     def pin_android(item: AndroidPackageSelection) -> AndroidPackagePin:
         return AndroidPackagePin(
@@ -238,7 +235,7 @@ def resolve_release_lock(
     lock = ReleaseLock(
         schema=LOCK_SCHEMA,
         source=SourcePin(
-            repository="reF1nd/sing-box",
+            repository=UPSTREAM_REPOSITORY,
             tag=tag,
             commit=commit,
             commit_time=commit_time,

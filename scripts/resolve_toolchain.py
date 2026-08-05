@@ -14,6 +14,7 @@ from androidlibboxlite.errors import ReleaseError
 from androidlibboxlite.github_api import GitHubClient
 from androidlibboxlite.lockfile import ReleaseLock
 from androidlibboxlite.toolchains import ArchiveCache, resolve_release_lock
+from androidlibboxlite.upstream import UPSTREAM_NAME, UPSTREAM_OWNER
 
 
 def _git_head() -> str:
@@ -33,10 +34,14 @@ def _git_head() -> str:
 
 def _verify_upstream(tag: str, commit: str) -> int:
     client = GitHubClient()
-    matches = [item for item in client.iter_tags("reF1nd", "sing-box") if item.name == tag]
+    matches = [
+        item
+        for item in client.iter_tags(UPSTREAM_OWNER, UPSTREAM_NAME)
+        if item.name == tag
+    ]
     if len(matches) != 1 or matches[0].commit != commit:
         raise ReleaseError("UPSTREAM_TAG_MOVED", f"{tag} does not resolve to {commit}")
-    return client.commit_timestamp("reF1nd", "sing-box", commit)
+    return client.commit_timestamp(UPSTREAM_OWNER, UPSTREAM_NAME, commit)
 
 
 def _write_immutable(path: Path, lock: ReleaseLock) -> None:

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from .errors import ReleaseError
 from .semver import SemVer
+from .upstream import UPSTREAM_REPOSITORY
 
 
 LOCK_SCHEMA = 1
@@ -200,8 +201,8 @@ class ReleaseLock:
         source_raw = _mapping(root["source"], "source")
         _exact_keys(source_raw, {"repository", "tag", "commit", "commitTime", "archive"}, "source")
         repository = _string(source_raw["repository"], "source.repository")
-        if repository != "reF1nd/sing-box":
-            _policy_error("source repository must be reF1nd/sing-box")
+        if repository != UPSTREAM_REPOSITORY:
+            _policy_error(f"source repository must be {UPSTREAM_REPOSITORY}")
         tag = _string(source_raw["tag"], "source.tag")
         SemVer.parse(tag)
         commit = _sha1(source_raw["commit"], "source.commit")

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from androidlibboxlite.upstream import (
+    BASELINE_COMMIT,
+    BASELINE_TAG,
+    UPSTREAM_REPOSITORY,
+)
+
 
 def archive(name: str, sha1: str | None = None) -> dict[str, object]:
     return {
@@ -14,9 +20,9 @@ def release_lock_dict() -> dict[str, object]:
     return {
         "schema": 1,
         "source": {
-            "repository": "reF1nd/sing-box",
-            "tag": "v1.14.0-alpha.47",
-            "commit": "37b4386bddb143e0780435c467cd2c5f1250a4ff",
+            "repository": UPSTREAM_REPOSITORY,
+            "tag": BASELINE_TAG,
+            "commit": BASELINE_COMMIT,
             "commitTime": 1784505600,
             "archive": archive("sing-box.zip"),
         },
@@ -83,7 +89,7 @@ def release_lock_dict() -> dict[str, object]:
                 "ts_omit_synology",
                 "ts_omit_bird",
             ],
-            "ldflags": "-X github.com/sagernet/sing-box/constant.Version=1.14.0-alpha.47 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0 -s -w -buildid=",
+            "ldflags": f"-X github.com/sagernet/sing-box/constant.Version={BASELINE_TAG.removeprefix('v')} -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0 -s -w -buildid=",
         },
         "workflowCommit": "f" * 40,
     }

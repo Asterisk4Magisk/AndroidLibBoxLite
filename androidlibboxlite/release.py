@@ -6,9 +6,10 @@ from pathlib import Path
 from .errors import ReleaseError
 from .lockfile import ReleaseLock
 from .semver import SemVer
+from .upstream import BASELINE_TAG
 
 
-_BASELINE = SemVer.parse("v1.14.0-alpha.47")
+_BASELINE = SemVer.parse(BASELINE_TAG)
 
 
 @dataclass(frozen=True)
