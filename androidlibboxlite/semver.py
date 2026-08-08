@@ -6,6 +6,7 @@ import re
 from typing import Iterable
 
 from .errors import ReleaseError
+from .upstream import UPSTREAM_TAG_SUFFIX
 
 
 _TAG_PATTERN = re.compile(
@@ -26,7 +27,8 @@ class SemVer:
 
     @classmethod
     def parse(cls, tag: str) -> "SemVer":
-        match = _TAG_PATTERN.fullmatch(tag)
+        semantic_tag = tag.removesuffix(UPSTREAM_TAG_SUFFIX)
+        match = _TAG_PATTERN.fullmatch(semantic_tag)
         if match is None:
             raise ReleaseError("UPSTREAM_TAG_INVALID", f"noncanonical tag: {tag!r}")
         prerelease: list[int | str] = []

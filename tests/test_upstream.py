@@ -1,13 +1,18 @@
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
+from androidlibboxlite.semver import GitTag
 from androidlibboxlite.upstream import (
     BASELINE_COMMIT,
     BASELINE_TAG,
     UPSTREAM_REPOSITORY,
     source_archive_url,
 )
+from scripts import discover_upstream
 
 
 class UpstreamTest(unittest.TestCase):
@@ -29,6 +34,35 @@ class UpstreamTest(unittest.TestCase):
         )
         self.assertEqual(baseline["commit"], BASELINE_COMMIT)
         self.assertEqual(baseline["tag"], BASELINE_TAG)
+
+    def test_discovery_accepts_only_ref1nd_tags(self) -> None:
+        class FakeGitHubClient:
+            def iter_tags(self, owner: str, repo: str) -> list[GitTag]:
+                return [
+                    GitTag("v1.14.0-beta.8", "8" * 40),
+                    GitTag("v1.14.0-beta.10-reF1nd", "1" * 40),
+                ]
+
+            def published_release_tags(self, owner: str, repo: str) -> set[str]:
+                return set()
+
+        output = io.StringIO()
+        with (
+            patch.object(discover_upstream, "GitHubClient", return_value=FakeGitHubClient()),
+            patch("sys.argv", ["discover_upstream.py"]),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(0, discover_upstream.main())
+
+        self.assertEqual(
+            [
+                {
+                    "tag": "v1.14.0-beta.10-reF1nd",
+                    "commit": "1" * 40,
+                }
+            ],
+            json.loads(output.getvalue()),
+        )
 
 
 if __name__ == "__main__":

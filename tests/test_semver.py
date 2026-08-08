@@ -23,6 +23,27 @@ class SemVerTest(unittest.TestCase):
             [item.tag for item in sorted(tags)],
         )
 
+    def test_orders_ref1nd_variants_by_semantic_version(self) -> None:
+        tags = [
+            SemVer.parse("v1.14.0-reF1nd"),
+            SemVer.parse("v1.14.0-rc.1-reF1nd"),
+            SemVer.parse("v1.14.0-beta.10-reF1nd"),
+            SemVer.parse("v1.14.0-beta.9-reF1nd"),
+        ]
+
+        self.assertEqual(
+            [
+                "v1.14.0-beta.9-reF1nd",
+                "v1.14.0-beta.10-reF1nd",
+                "v1.14.0-rc.1-reF1nd",
+                "v1.14.0-reF1nd",
+            ],
+            [item.tag for item in sorted(tags)],
+        )
+
+    def test_treats_ref1nd_stable_variant_as_stable(self) -> None:
+        self.assertFalse(SemVer.parse("v1.14.0-reF1nd").is_prerelease)
+
     def test_rejects_noncanonical_tags(self) -> None:
         for value in ("1.14.0", "v01.14.0", "v1.14", "v1.14.0-alpha..1", "v1.14.0+meta"):
             with self.subTest(value=value):
@@ -34,6 +55,7 @@ class SemVerTest(unittest.TestCase):
         tags = [
             GitTag("v1.14.0", "c" * 40),
             GitTag("not-a-release", "d" * 40),
+            GitTag("v1.14.0-beta.10-reF1nd", "1" * 40),
             GitTag("v1.14.0-beta.6-reF1nd", "b" * 40),
             GitTag("v1.14.0-beta.5-reF1nd", "a" * 40),
             GitTag("v1.14.0-beta.4-reF1nd", "f" * 40),
@@ -47,7 +69,11 @@ class SemVerTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            ["v1.14.0-beta.6-reF1nd", "v1.14.0"],
+            [
+                "v1.14.0-beta.6-reF1nd",
+                "v1.14.0-beta.10-reF1nd",
+                "v1.14.0",
+            ],
             [item.name for item in result],
         )
 

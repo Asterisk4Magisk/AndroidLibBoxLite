@@ -11,7 +11,12 @@ if __package__ in (None, ""):
 
 from androidlibboxlite.github_api import GitHubClient
 from androidlibboxlite.semver import SemVer, discover_unreleased
-from androidlibboxlite.upstream import BASELINE_TAG, UPSTREAM_NAME, UPSTREAM_OWNER
+from androidlibboxlite.upstream import (
+    BASELINE_TAG,
+    UPSTREAM_NAME,
+    UPSTREAM_OWNER,
+    UPSTREAM_TAG_SUFFIX,
+)
 
 
 def main() -> int:
@@ -23,7 +28,11 @@ def main() -> int:
     args = parser.parse_args()
 
     client = GitHubClient()
-    tags = client.iter_tags(UPSTREAM_OWNER, UPSTREAM_NAME)
+    tags = (
+        tag
+        for tag in client.iter_tags(UPSTREAM_OWNER, UPSTREAM_NAME)
+        if tag.name.endswith(UPSTREAM_TAG_SUFFIX)
+    )
     released = client.published_release_tags(args.provider_owner, args.provider_repo)
     pending = discover_unreleased(tags, released, SemVer.parse(args.baseline))
     if args.format == "tsv":
