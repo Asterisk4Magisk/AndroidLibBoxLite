@@ -37,6 +37,7 @@ REQUIRED_TAGS = (
     "ts_omit_aws",
     "ts_omit_synology",
     "ts_omit_bird",
+    "http2legacy",
 )
 FORBIDDEN_TAGS = frozenset({"with_embedded_tor", "with_usbip"})
 ALLOWED_DOWNLOAD_HOSTS = frozenset(

@@ -31,7 +31,8 @@
       "ts_omit_kube",
       "ts_omit_aws",
       "ts_omit_synology",
-      "ts_omit_bird"
+      "ts_omit_bird",
+      "http2legacy"
     ]
   },
   "schema": 1,

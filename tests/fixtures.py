@@ -88,6 +88,7 @@ def release_lock_dict() -> dict[str, object]:
                 "ts_omit_aws",
                 "ts_omit_synology",
                 "ts_omit_bird",
+                "http2legacy",
             ],
             "ldflags": f"-X github.com/sagernet/sing-box/constant.Version={BASELINE_TAG.removeprefix('v')} -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0 -s -w -buildid=",
         },
