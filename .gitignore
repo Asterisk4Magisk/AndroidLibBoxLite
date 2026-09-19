@@ -1,11 +1,9 @@
-__pycache__/
-*.py[cod]
-.coverage
-.pytest_cache/
-.venv/
+/.idea/
 /build/
 /dist/
 /work/
-/release/
 /.toolchains/
-.idea
+/*.aar
+/*.jar
+__pycache__/
+*.py[cod]

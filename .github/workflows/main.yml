@@ -1,0 +1,120 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional release tag (e.g. v1.15.0-alpha.6-reF1nd or v1.15.0-alpha.6-reF1nd-android.1)
+        required: false
+        type: string
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.release_tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release tag
+        if: inputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re, sys
+          sys.path.insert(0, 'scripts')
+          from check_upstream import pinned
+          core = pinned(pathlib.Path('.'))
+          if not re.fullmatch(re.escape(core) + r'(?:-android\.[1-9]\d*)?', os.environ['RELEASE_TAG']):
+              raise SystemExit('Release tag must match the pinned core, optionally with -android.N')
+          PY
+
+      - name: Setup Golang
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '14742923'
+          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+
+      - name: Install NDK
+        run: |
+          sdkmanager 'ndk;28.2.13676358'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          python3 scripts/build_shared.py
+
+      - name: Upload build artifacts
+        if: inputs.release_tag == ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: libbox
+          path: |
+            libbox.aar
+            libbox-sources.jar
+          if-no-files-found: error
+
+      - name: Create release tag
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh auth setup-git
+          git fetch origin --tags
+          if git rev-parse --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          else
+            git tag "$RELEASE_TAG"
+          fi
+          git push origin "refs/tags/$RELEASE_TAG"
+
+      - name: Upload AndroidLibBoxLite to release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
+            if [ "$(jq -r .isDraft release-state.json)" = false ]; then
+              echo 'Release is already published; keeping existing assets.'
+              exit 0
+            fi
+          else
+            prerelease="$(python3 -c 'import pathlib,sys; sys.path.insert(0,"scripts"); from check_upstream import pinned,version; print(str(not version(pinned(pathlib.Path(".")))[3]).lower())')"
+            gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes --prerelease="$prerelease"
+          fi
+          gh release upload "$RELEASE_TAG" libbox.aar libbox-sources.jar --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

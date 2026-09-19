@@ -1,0 +1,85 @@
+name: Check and Update sing-box
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sing-box-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout our repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Check latest upstream tag
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/check_upstream.py --repository "$GH_REPO" --output "$GITHUB_OUTPUT"
+
+      - name: Setup Golang
+        if: steps.check.outputs.update == 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Update dependencies
+        if: steps.check.outputs.update == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.check.outputs.tag }}
+        run: python3 scripts/check_upstream.py --tag "$RELEASE_TAG" --apply
+
+      - name: Commit and push changes
+        if: steps.check.outputs.build == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.check.outputs.tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          UPDATE: ${{ steps.check.outputs.update }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin "$DEFAULT_BRANCH" --tags
+          if [ "$UPDATE" = false ] && git rev-parse --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            python3 - <<'PY'
+          import os, subprocess, sys
+          sys.path.insert(0, 'scripts')
+          from check_upstream import pinned_text
+          tag = os.environ['RELEASE_TAG']
+          module = subprocess.check_output(['git', 'show', f'{tag}:go.mod'], text=True)
+          if pinned_text(module) != tag:
+              raise SystemExit('Existing retry tag pins a different core')
+          PY
+            exit 0
+          fi
+          test "$(git rev-parse "origin/$DEFAULT_BRANCH")" = "$(git rev-parse HEAD)"
+          git add go.mod go.sum
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update sing-box to $RELEASE_TAG"
+          fi
+          if git rev-parse --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          else
+            git tag "$RELEASE_TAG"
+          fi
+          git push --atomic origin "HEAD:refs/heads/$DEFAULT_BRANCH" "refs/tags/$RELEASE_TAG"
+
+      - name: Trigger build
+        if: steps.check.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.check.outputs.tag }}
+        run: gh workflow run main.yml --ref "$RELEASE_TAG" --field "release_tag=$RELEASE_TAG"
