@@ -9,12 +9,17 @@
 package daemon
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 	"net/http"
 
 	C "github.com/sagernet/sing-box/constant"
 )
+
+func urlTestContextWithQUICKeepSession(ctx context.Context) context.Context {
+	return ctx
+}
 
 func urlTestNewHTTP3Transport(_ net.Conn, _ *tls.Config) (http.RoundTripper, error) {
 	return nil, C.ErrQUICNotIncluded

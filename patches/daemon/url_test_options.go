@@ -12,7 +12,7 @@
 // Options reach this package over the stock StartedService.URLTest gRPC
 // method as protobuf unknown fields (see AppendURLTestOptions), so the
 // generated protobuf and reF1nd/sing-box itself stay untouched. The
-// prepare_sources.py patch bridges the stock handler to runURLTestOptions;
+// prepare_sources.py patch bridges the stock handler to handleURLTestOptions;
 // a stock unpatched daemon ignores the unknown fields and still answers the
 // plain URLTest.
 
@@ -22,6 +22,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/tls"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,10 +34,8 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/protocol/group"
 	"github.com/sagernet/sing-mux"
-	qtls "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing-snell"
 	"github.com/sagernet/sing/common"
-	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/ntp"
@@ -72,54 +71,113 @@ const (
 // URLTestWithOptions measures outboundTag (or the default outbound when the
 // tag is empty) through the running instance and stores the result in the
 // instance's URL test history, so the group UI sees the same number the
-// group selector does.
+// group selector does. A failed measurement drops the stale history entry,
+// and every urltest group containing the measured outbound re-runs its
+// selection against the updated history (clash API delay test behaviour).
+// Cancelling ctx aborts the measurement.
 //
 // Port of husi's urltest.RunTag + Run (libcore/urltest/urltest.go:71-138).
 func (s *StartedService) URLTestWithOptions(
+	ctx context.Context,
 	outboundTag string,
 	link string,
 	timeoutMs int32,
 	flags URLTestFlags,
 ) (int32, error) {
+	instance, detour, err := s.urlTestOptionsTarget(outboundTag)
+	if err != nil {
+		return -1, err
+	}
+	instanceCtx := instance.ctx
+	if instanceCtx == nil {
+		return -1, status.Error(codes.FailedPrecondition, "instance context is not available")
+	}
+	if boxurltest.UnifiedDelayFromContext(instanceCtx) {
+		flags |= URLTestUnifiedDelay
+	}
+	latency, err := urlTestRunWithTimeout(ctx, instanceCtx, detour, link, timeoutMs, flags)
+
+	historyStorage := instance.urlTestHistoryStorage
+	if historyStorage != nil {
+		realTag := group.RealTag(detour, N.NetworkTCP)
+		if err != nil {
+			historyStorage.DeleteURLTestHistory(realTag)
+		} else {
+			historyStorage.StoreURLTestHistory(realTag, &adapter.URLTestHistory{
+				Time:  time.Now(),
+				Delay: latency,
+			})
+		}
+		urlTestUpdateGroups(instance.outboundManager, realTag)
+	}
+	if err != nil {
+		return -1, err
+	}
+	return int32(latency), nil
+}
+
+func (s *StartedService) urlTestOptionsTarget(outboundTag string) (*Instance, adapter.Outbound, error) {
 	s.serviceAccess.RLock()
 	instance := s.instance
 	s.serviceAccess.RUnlock()
 	if instance == nil {
-		return -1, E.New("service is not started")
+		return nil, nil, status.Error(codes.FailedPrecondition, "service is not started")
 	}
 	outboundManager := instance.outboundManager
 	if outboundManager == nil {
-		return -1, E.New("outbound manager is not available")
+		return nil, nil, status.Error(codes.FailedPrecondition, "outbound manager is not available")
 	}
-	var detour adapter.Outbound
 	if outboundTag == "" {
-		detour = outboundManager.Default()
-	} else {
-		var loaded bool
-		detour, loaded = outboundManager.Outbound(outboundTag)
+		return instance, outboundManager.Default(), nil
+	}
+	detour, loaded := outboundManager.Outbound(outboundTag)
+	if !loaded {
+		return nil, nil, status.Error(codes.NotFound, "outbound not found: "+outboundTag)
+	}
+	return instance, detour, nil
+}
+
+// urlTestUpdateGroups lets every urltest group that (transitively) contains
+// realTag re-select against the fresh history. Mirrors the clash API delay
+// endpoint (experimental/clashapi/proxies.go).
+func urlTestUpdateGroups(outboundManager adapter.OutboundManager, realTag string) {
+	if outboundManager == nil {
+		return
+	}
+	for _, detour := range outboundManager.Outbounds() {
+		urlTestGroup, isURLTestGroup := detour.(adapter.URLTestGroup)
+		if !isURLTestGroup {
+			continue
+		}
+		if !urlTestGroupContains(outboundManager, urlTestGroup, realTag, map[string]bool{detour.Tag(): true}) {
+			continue
+		}
+		urlTestGroup.PerformUpdateCheck()
+	}
+}
+
+func urlTestGroupContains(outboundManager adapter.OutboundManager, outboundGroup adapter.OutboundGroup, tag string, visited map[string]bool) bool {
+	for _, member := range outboundGroup.All() {
+		if member == tag {
+			return true
+		}
+		if visited[member] {
+			continue
+		}
+		detour, loaded := outboundManager.Outbound(member)
 		if !loaded {
-			return -1, E.New("outbound not found: ", outboundTag)
+			continue
+		}
+		nestedGroup, isGroup := detour.(adapter.OutboundGroup)
+		if !isGroup {
+			continue
+		}
+		visited[member] = true
+		if urlTestGroupContains(outboundManager, nestedGroup, tag, visited) {
+			return true
 		}
 	}
-	instanceCtx := instance.ctx
-	if instanceCtx == nil {
-		return -1, E.New("instance context is not available")
-	}
-	latency, err := urlTestRunWithTimeout(instanceCtx, detour, link, timeoutMs, flags)
-	if err != nil {
-		return -1, err
-	}
-
-	// Store the result so the UI sees the same number the group selector
-	// does (husi urltest.go:120-127).
-	historyStorage := instance.urlTestHistoryStorage
-	if historyStorage != nil {
-		historyStorage.StoreURLTestHistory(group.RealTag(detour, N.NetworkTCP), &adapter.URLTestHistory{
-			Time:  time.Now(),
-			Delay: latency,
-		})
-	}
-	return int32(latency), nil
+	return false
 }
 
 // Wire format: the URL test options travel to the daemon as protobuf
@@ -195,7 +253,7 @@ func urlTestOptionsFromRequest(request *URLTestRequest) (urlTestOptionsRequest, 
 			if n < 0 {
 				return urlTestOptionsRequest{}, false
 			}
-			options.TimeoutMs = int32(value)
+			options.TimeoutMs = int32(min(value, math.MaxInt32))
 			loaded = true
 			valueLength = n
 		case urlTestOptionFieldFlags:
@@ -220,23 +278,43 @@ func urlTestOptionsFromRequest(request *URLTestRequest) (urlTestOptionsRequest, 
 	return options, loaded
 }
 
-// runURLTestOptions is the hook the prepare_sources.py patch calls from the
-// stock StartedService.URLTest handler when a request carries the options
-// envelope. The measurement runs synchronously so a blocked gRPC handler
-// throttles real measurements — that is what makes the caller's worker pool
+// handleURLTestOptions is the hook the prepare_sources.py patch calls from
+// the stock StartedService.URLTest handler. It reports handled == false for
+// a stock request, and for a urltest group target: such a group owns its
+// link and selection, so it stays on the stock CheckOutbounds path.
+//
+// The measurement runs synchronously so a blocked gRPC handler throttles
+// real measurements — that is what makes the caller's worker pool
 // concurrency limit meaningful (husi awaits the same way).
-func (s *StartedService) runURLTestOptions(outboundTag string, options urlTestOptionsRequest) error {
-	_, err := s.URLTestWithOptions(outboundTag, options.Link, options.TimeoutMs, options.Flags)
-	if err != nil {
-		return status.Error(codes.Internal, err.Error())
+func (s *StartedService) handleURLTestOptions(ctx context.Context, request *URLTestRequest) (bool, error) {
+	options, loaded := urlTestOptionsFromRequest(request)
+	if !loaded {
+		return false, nil
 	}
-	return nil
+	_, detour, err := s.urlTestOptionsTarget(request.OutboundTag)
+	if err != nil {
+		return true, err
+	}
+	if _, isURLTestGroup := detour.(*group.URLTest); isURLTestGroup {
+		return false, nil
+	}
+	_, err = s.URLTestWithOptions(ctx, request.OutboundTag, options.Link, options.TimeoutMs, options.Flags)
+	if err != nil {
+		if _, isStatus := status.FromError(err); isStatus {
+			return true, err
+		}
+		return true, status.Error(codes.Internal, err.Error())
+	}
+	return true, nil
 }
 
-// urlTestRunWithTimeout bounds the measurement by timeoutMs (husi
-// urltest.go:106-137, minus the goroutine indirection: gomobile callers are
-// already off the UI thread).
+// urlTestRunWithTimeout bounds the measurement by timeoutMs and aborts it
+// when requestCtx is cancelled (husi urltest.go:106-137, minus the goroutine
+// indirection: gomobile callers are already off the UI thread). The
+// measurement context derives from instanceCtx, which carries the NTP time
+// and root CA pool the TLS config reads.
 func urlTestRunWithTimeout(
+	requestCtx context.Context,
 	instanceCtx context.Context,
 	detour adapter.Outbound,
 	link string,
@@ -248,6 +326,10 @@ func urlTestRunWithTimeout(
 	}
 	ctx, cancel := context.WithTimeout(instanceCtx, time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
+	if requestCtx != nil {
+		stop := context.AfterFunc(requestCtx, cancel)
+		defer stop()
+	}
 	return urlTestMeasure(ctx, link, detour, flags)
 }
 
@@ -269,18 +351,19 @@ func urlTestMeasure(ctx context.Context, link string, detour N.Dialer, flags URL
 // urlTestContextWithKeepSession marks the context so multiplex-capable
 // protocols keep the session across the warmup and measured requests.
 // Mirrors husi urltest.go:154-162 minus trusttunnel (not present in
-// reF1nd/sing-box).
+// reF1nd/sing-box); the QUIC marker lives behind the with_quic build tag.
 func urlTestContextWithKeepSession(ctx context.Context) context.Context {
 	ctx = adapter.ContextWithKeepSession(ctx)
 	ctx = mux.ContextWithKeepSession(ctx)
 	ctx = anytls.ContextWithKeepSession(ctx)
-	ctx = qtls.ContextWithKeepSession(ctx)
+	ctx = urlTestContextWithQUICKeepSession(ctx)
 	ctx = snell.ContextWithKeepSession(ctx)
 	return ctx
 }
 
 // urlTestMeasureOnce is the actual HEAD-request measurement. Port of husi
-// urltest.go:173-253.
+// urltest.go:173-253. With unified delay, a failed second request falls back
+// to the first request's latency (reF1nd common/urltest behaviour).
 func urlTestMeasureOnce(ctx context.Context, link string, detour N.Dialer, flags URLTestFlags) (t uint16, err error) {
 	link = cmp.Or(link, UrlTestDefaultLink)
 	linkURL, err := url.Parse(link)
@@ -354,19 +437,16 @@ func urlTestMeasureOnce(ctx context.Context, link string, detour N.Dialer, flags
 	if err != nil {
 		return
 	}
-	defer response.Body.Close()
+	response.Body.Close()
+	elapsed := time.Since(start)
 	if flags&URLTestUnifiedDelay != 0 {
-		start = time.Now()
-		response, err := client.Do(req)
-		if err != nil {
-			return 0, err
+		second := time.Now()
+		secondResponse, secondErr := client.Do(req)
+		if secondErr == nil {
+			secondResponse.Body.Close()
+			elapsed = time.Since(second)
 		}
-		defer response.Body.Close()
 	}
-	t = uint16(time.Since(start) / time.Millisecond)
+	t = uint16(min(elapsed/time.Millisecond, math.MaxUint16))
 	return
 }
-
-// Compile-time assertion that the history storage type matches upstream —
-// guards against reF1nd changing the common/urltest package layout.
-var _ = boxurltest.NewHistoryStorage
