@@ -8,6 +8,13 @@
 // Rewritten to run inside the reF1nd/sing-box daemon package so the custom
 // measurement can reach the instance's private outboundManager and
 // urlTestHistoryStorage.
+//
+// Options reach this package over the stock StartedService.URLTest gRPC
+// method as protobuf unknown fields (see AppendURLTestOptions), so the
+// generated protobuf and reF1nd/sing-box itself stay untouched. The
+// prepare_sources.py patch bridges the stock handler to runURLTestOptions;
+// a stock unpatched daemon ignores the unknown fields and still answers the
+// plain URLTest.
 
 package daemon
 
@@ -33,6 +40,9 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/ntp"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 // URLTestFlags is the option bitmask for URLTestWithOptions. Mirrors husi's
@@ -110,6 +120,117 @@ func (s *StartedService) URLTestWithOptions(
 		})
 	}
 	return int32(latency), nil
+}
+
+// Wire format: the URL test options travel to the daemon as protobuf
+// unknown fields on the stock StartedService.URLTest request, so neither
+// the generated protobuf nor reF1nd/sing-box is modified. gRPC-go's
+// default codec preserves unknown fields end to end (field 1 stays the
+// outbound tag):
+//
+//	1000 (bytes)  — test link
+//	1001 (varint) — timeout in milliseconds
+//	1002 (varint) — URLTestFlags bitmask
+//
+// A stock, unpatched daemon ignores the unknown fields and performs the
+// plain URLTest; a stock client cannot produce them.
+const (
+	urlTestOptionFieldLink    protowire.Number = 1000
+	urlTestOptionFieldTimeout protowire.Number = 1001
+	urlTestOptionFieldFlags   protowire.Number = 1002
+)
+
+// urlTestOptionsRequest is the decoded form of the unknown-field payload.
+type urlTestOptionsRequest struct {
+	Link      string
+	TimeoutMs int32
+	Flags     URLTestFlags
+}
+
+// AppendURLTestOptions attaches the options to request as unknown fields.
+// The request must be freshly built by the caller: SetUnknown replaces any
+// previously attached payload.
+func AppendURLTestOptions(request *URLTestRequest, link string, timeoutMs int32, flags URLTestFlags) {
+	var unknown []byte
+	if link != "" {
+		unknown = protowire.AppendTag(unknown, urlTestOptionFieldLink, protowire.BytesType)
+		unknown = protowire.AppendString(unknown, link)
+	}
+	if timeoutMs > 0 {
+		unknown = protowire.AppendTag(unknown, urlTestOptionFieldTimeout, protowire.VarintType)
+		unknown = protowire.AppendVarint(unknown, uint64(timeoutMs))
+	}
+	unknown = protowire.AppendTag(unknown, urlTestOptionFieldFlags, protowire.VarintType)
+	unknown = protowire.AppendVarint(unknown, uint64(flags))
+	request.ProtoReflect().SetUnknown(unknown)
+}
+
+// urlTestOptionsFromRequest reports whether request carries the options
+// envelope and returns its decoded form. A request without unknown fields,
+// or with unknown fields outside this package's field numbers, is a stock
+// URL test and returns loaded == false.
+func urlTestOptionsFromRequest(request *URLTestRequest) (urlTestOptionsRequest, bool) {
+	unknown := request.ProtoReflect().GetUnknown()
+	var options urlTestOptionsRequest
+	var loaded bool
+	for len(unknown) > 0 {
+		number, wireType, tagLength := protowire.ConsumeTag(unknown)
+		if tagLength < 0 {
+			return urlTestOptionsRequest{}, false
+		}
+		unknown = unknown[tagLength:]
+		var valueLength int
+		switch number {
+		case urlTestOptionFieldLink:
+			if wireType != protowire.BytesType {
+				return urlTestOptionsRequest{}, false
+			}
+			options.Link, valueLength = protowire.ConsumeString(unknown)
+			loaded = true
+		case urlTestOptionFieldTimeout:
+			if wireType != protowire.VarintType {
+				return urlTestOptionsRequest{}, false
+			}
+			value, n := protowire.ConsumeVarint(unknown)
+			if n < 0 {
+				return urlTestOptionsRequest{}, false
+			}
+			options.TimeoutMs = int32(value)
+			loaded = true
+			valueLength = n
+		case urlTestOptionFieldFlags:
+			if wireType != protowire.VarintType {
+				return urlTestOptionsRequest{}, false
+			}
+			value, n := protowire.ConsumeVarint(unknown)
+			if n < 0 {
+				return urlTestOptionsRequest{}, false
+			}
+			options.Flags = URLTestFlags(uint8(value))
+			loaded = true
+			valueLength = n
+		default:
+			valueLength = protowire.ConsumeFieldValue(number, wireType, unknown)
+		}
+		if valueLength < 0 {
+			return urlTestOptionsRequest{}, false
+		}
+		unknown = unknown[valueLength:]
+	}
+	return options, loaded
+}
+
+// runURLTestOptions is the hook the prepare_sources.py patch calls from the
+// stock StartedService.URLTest handler when a request carries the options
+// envelope. The measurement runs synchronously so a blocked gRPC handler
+// throttles real measurements — that is what makes the caller's worker pool
+// concurrency limit meaningful (husi awaits the same way).
+func (s *StartedService) runURLTestOptions(outboundTag string, options urlTestOptionsRequest) error {
+	_, err := s.URLTestWithOptions(outboundTag, options.Link, options.TimeoutMs, options.Flags)
+	if err != nil {
+		return status.Error(codes.Internal, err.Error())
+	}
+	return nil
 }
 
 // urlTestRunWithTimeout bounds the measurement by timeoutMs (husi

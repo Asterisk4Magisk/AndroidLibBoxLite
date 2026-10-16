@@ -4,31 +4,41 @@
 // gomobile-facing wrapper for the daemon's URLTestWithOptions.
 //
 // Injected by Asterisk4Magisk/AndroidLibBoxLite into the staged sing-box
-// source so the bind output gains CommandServer.urlTestWithOptions /
-// CommandServer.urlTestDefaults without touching reF1nd/sing-box.
+// source so the AAR bind output gains CommandClient.urlTestWithOptions
+// without touching reF1nd/sing-box. See daemon/url_test_options.go for the
+// options wire format (protobuf unknown fields on the stock URLTest
+// request).
 
 package libbox
 
 import (
+	"context"
+
 	"github.com/sagernet/sing-box/daemon"
+	E "github.com/sagernet/sing/common/exceptions"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// URLTestWithOptions measures outboundTag through the running instance with
-// husi's custom measurement flags. Returns the latency in milliseconds, or
-// -1 when the service is not started or the outbound is missing.
+// URLTestWithOptions measures outboundTag with husi's custom URL test
+// options. It works in both run modes, through the same CommandClient the
+// plain URLTest uses: the in-process CommandServer socket in VPN mode and
+// the CLI process' api service in root mode, because both register the same
+// StartedService gRPC surface.
 //
-// flags is the bitmask from daemon.URLTestFlags: 1 = unified delay,
-// 2 = ignore handshake time. The Kotlin side passes 0 to express "both
-// disabled" without importing the type.
+// The measurement is synchronous — the call returns after the daemon stored
+// the result in its URL test history, which the group subscription then
+// pushes to the UI. Callers are expected to bound concurrency themselves
+// (the delay-test worker pool does), matching husi's per-item awaits.
 //
-// gomobile-bind exposes this as CommandServer.urlTestWithOptions.
-func (s *CommandServer) URLTestWithOptions(
+// gomobile-bind exposes this as CommandClient.urlTestWithOptions, throwing
+// on failure.
+func (c *CommandClient) URLTestWithOptions(
 	outboundTag string,
 	link string,
 	timeoutMs int32,
 	unifiedDelay bool,
 	ignoreHandshakeTime bool,
-) int32 {
+) error {
 	var flags daemon.URLTestFlags
 	if unifiedDelay {
 		flags |= daemon.URLTestUnifiedDelay
@@ -36,15 +46,13 @@ func (s *CommandServer) URLTestWithOptions(
 	if ignoreHandshakeTime {
 		flags |= daemon.URLTestIgnoreHandshakeTime
 	}
-	latency, err := s.StartedService.URLTestWithOptions(outboundTag, link, timeoutMs, flags)
+	request := &daemon.URLTestRequest{OutboundTag: outboundTag}
+	daemon.AppendURLTestOptions(request, link, timeoutMs, flags)
+	_, err := callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*emptypb.Empty, error) {
+		return client.URLTest(ctx, request)
+	})
 	if err != nil {
-		return -1
+		return E.Cause(err, "url test with options")
 	}
-	return latency
-}
-
-// URLTestDefaultLink exposes the default test link so the Kotlin side can
-// pre-fill the settings field with the same constant.
-func (s *CommandServer) URLTestDefaultLink() string {
-	return daemon.UrlTestDefaultLink
+	return nil
 }
