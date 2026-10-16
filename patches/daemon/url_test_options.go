@@ -339,12 +339,15 @@ func urlTestMeasureOnce(ctx context.Context, link string, detour N.Dialer, flags
 			TLSClientConfig: tlsConfig,
 		}
 	}
+	// No client-level Timeout: the request carries the caller's per-test
+	// deadline through http.NewRequestWithContext (urlTestRunWithTimeout),
+	// so a caller-supplied timeoutMs larger than C.TCPTimeout is honoured
+	// instead of being cut short by a fixed client timeout.
 	client := http.Client{
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-		Timeout: C.TCPTimeout,
 	}
 	defer client.CloseIdleConnections()
 	response, err := client.Do(req)
