@@ -11,10 +11,41 @@ ENVIRONMENT = 'github.com/sagernet/sing-box/common/androidcli'
 # reF1nd/sing-box itself.
 INJECTED_FILES = (
     ('patches/daemon/url_test_options.go', 'daemon/url_test_options.go'),
+    ('patches/daemon/url_test_options_test.go', 'daemon/url_test_options_test.go'),
     ('patches/daemon/url_test_http3.go', 'daemon/url_test_http3.go'),
     ('patches/daemon/url_test_http3_stub.go', 'daemon/url_test_http3_stub.go'),
     ('patches/experimental_libbox/url_test_options.go', 'experimental/libbox/url_test_options.go'),
 )
+
+# Surgical text patches applied to staged upstream files, as
+# (destination-relative-to-staged-core, old, new). Each old snippet must
+# occur exactly once; an upstream bump that moves it fails the build loudly
+# and a human re-verifies the anchor.
+#
+# daemon/started_service.go: bridge the stock URLTest gRPC handler (shared by
+# the in-process CommandServer and the CLI api service) to the injected
+# custom measurement when the request carries the options envelope.
+PATCHES = (
+    (
+        'daemon/started_service.go',
+        '''\toutboundTag := request.OutboundTag
+\toutbound, isLoaded := boxService.outboundManager.Outbound(outboundTag)''',
+        '''\toutboundTag := request.OutboundTag
+\tif urlTestOptions, urlTestOptionsLoaded := urlTestOptionsFromRequest(request); urlTestOptionsLoaded {
+\t\treturn &emptypb.Empty{}, s.runURLTestOptions(outboundTag, urlTestOptions)
+\t}
+\toutbound, isLoaded := boxService.outboundManager.Outbound(outboundTag)''',
+    ),
+)
+
+
+def patch_sources(core):
+    for destination_rel, old, new in PATCHES:
+        path = core / destination_rel
+        if not path.is_file():
+            raise ValueError(f'Missing upstream file for patch: {path}')
+        text = path.read_text(encoding='utf-8')
+        path.write_text(replace_once(text, old, new), encoding='utf-8')
 
 
 def replace_once(text, old, new):
@@ -46,6 +77,7 @@ def prepare_sources(repo, core):
         raise ValueError(f'Upstream now owns {environment}')
     shutil.copytree(repo / 'environment', environment)
     inject_patches(repo, core)
+    patch_sources(core)
     injected = {(core / destination_rel).resolve() for _, destination_rel in INJECTED_FILES}
     for original in core.rglob('*.go'):
         if original.name.endswith('_test.go') or original.is_relative_to(environment):
