@@ -16,7 +16,12 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	qtls "github.com/sagernet/sing-quic"
 )
+
+func urlTestContextWithQUICKeepSession(ctx context.Context) context.Context {
+	return qtls.ContextWithKeepSession(ctx)
+}
 
 func urlTestNewHTTP3Transport(conn net.Conn, tlsConfig *tls.Config) (http.RoundTripper, error) {
 	return &http3.Transport{

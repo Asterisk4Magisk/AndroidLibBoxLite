@@ -11,7 +11,6 @@ ENVIRONMENT = 'github.com/sagernet/sing-box/common/androidcli'
 # reF1nd/sing-box itself.
 INJECTED_FILES = (
     ('patches/daemon/url_test_options.go', 'daemon/url_test_options.go'),
-    ('patches/daemon/url_test_options_test.go', 'daemon/url_test_options_test.go'),
     ('patches/daemon/url_test_http3.go', 'daemon/url_test_http3.go'),
     ('patches/daemon/url_test_http3_stub.go', 'daemon/url_test_http3_stub.go'),
     ('patches/experimental_libbox/url_test_options.go', 'experimental/libbox/url_test_options.go'),
@@ -24,15 +23,19 @@ INJECTED_FILES = (
 #
 # daemon/started_service.go: bridge the stock URLTest gRPC handler (shared by
 # the in-process CommandServer and the CLI api service) to the injected
-# custom measurement when the request carries the options envelope.
+# custom measurement when the request carries the options envelope (urltest
+# group targets stay on the stock CheckOutbounds path).
 PATCHES = (
     (
         'daemon/started_service.go',
         '''\toutboundTag := request.OutboundTag
 \toutbound, isLoaded := boxService.outboundManager.Outbound(outboundTag)''',
         '''\toutboundTag := request.OutboundTag
-\tif urlTestOptions, urlTestOptionsLoaded := urlTestOptionsFromRequest(request); urlTestOptionsLoaded {
-\t\treturn &emptypb.Empty{}, s.runURLTestOptions(outboundTag, urlTestOptions)
+\tif urlTestOptionsHandled, urlTestOptionsErr := s.handleURLTestOptions(ctx, request); urlTestOptionsHandled {
+\t\tif urlTestOptionsErr != nil {
+\t\t\treturn nil, urlTestOptionsErr
+\t\t}
+\t\treturn &emptypb.Empty{}, nil
 \t}
 \toutbound, isLoaded := boxService.outboundManager.Outbound(outboundTag)''',
     ),
