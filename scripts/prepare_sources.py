@@ -5,11 +5,38 @@ import shutil
 
 ENVIRONMENT = 'github.com/sagernet/sing-box/common/androidcli'
 
+# Files injected verbatim into the staged upstream checkout as
+# (source-relative-to-repo, destination-relative-to-staged-core). The libbox
+# AAR gains the custom URL test (urlTestWithOptions) without any change to
+# reF1nd/sing-box itself.
+INJECTED_FILES = (
+    ('patches/daemon/url_test_options.go', 'daemon/url_test_options.go'),
+    ('patches/daemon/url_test_http3.go', 'daemon/url_test_http3.go'),
+    ('patches/daemon/url_test_http3_stub.go', 'daemon/url_test_http3_stub.go'),
+    ('patches/experimental_libbox/url_test_options.go', 'experimental/libbox/url_test_options.go'),
+)
+
 
 def replace_once(text, old, new):
     if text.count(old) != 1:
         raise ValueError(f'Upstream changed: expected exactly one {old!r}')
     return text.replace(old, new, 1)
+
+
+def inject_patches(repo, core):
+    # Copy each patch file to its destination in the staged checkout. The
+    # destination directory must exist (it is a real upstream package);
+    # refuse to create new package directories so an upstream rename is loud.
+    for source_rel, destination_rel in INJECTED_FILES:
+        source = repo / source_rel
+        if not source.is_file():
+            raise ValueError(f'Missing injected file: {source}')
+        destination = core / destination_rel
+        if destination.exists():
+            raise ValueError(f'Upstream now owns {destination}')
+        if not destination.parent.is_dir():
+            raise ValueError(f'Upstream package moved, cannot inject: {destination}')
+        shutil.copyfile(source, destination)
 
 
 def prepare_sources(repo, core):
@@ -18,8 +45,12 @@ def prepare_sources(repo, core):
     if environment.exists():
         raise ValueError(f'Upstream now owns {environment}')
     shutil.copytree(repo / 'environment', environment)
+    inject_patches(repo, core)
+    injected = {(core / destination_rel).resolve() for _, destination_rel in INJECTED_FILES}
     for original in core.rglob('*.go'):
         if original.name.endswith('_test.go') or original.is_relative_to(environment):
+            continue
+        if original.resolve() in injected:
             continue
         text = original.read_text(encoding='utf-8')
         is_command = original.parent == core / 'cmd/sing-box'
