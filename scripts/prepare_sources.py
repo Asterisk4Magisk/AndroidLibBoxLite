@@ -14,6 +14,7 @@ INJECTED_FILES = (
     ('patches/daemon/url_test_http3.go', 'daemon/url_test_http3.go'),
     ('patches/daemon/url_test_http3_stub.go', 'daemon/url_test_http3_stub.go'),
     ('patches/experimental_libbox/url_test_options.go', 'experimental/libbox/url_test_options.go'),
+    ('patches/dns_systemconfig/source_managed.go', 'dns/transport/local/systemconfig/source_managed.go'),
 )
 
 # Surgical text patches applied to staged upstream files, as
@@ -38,6 +39,34 @@ PATCHES = (
 \t\treturn &emptypb.Empty{}, nil
 \t}
 \toutbound, isLoaded := boxService.outboundManager.Outbound(outboundTag)''',
+    ),
+    # Android has no resolv.conf; standalone ROOT supplies the physical
+    # network's DNS servers through its own observer instead.
+    (
+        'dns/transport/local/systemconfig/source_resolv.go',
+        'func (s *Source) Configuration() *Config {\n',
+        'func (s *Source) Configuration() *Config {\n'
+        '\tif config := managedConfiguration(); config != nil {\n'
+        '\t\treturn config\n'
+        '\t}\n',
+    ),
+    # Start the observer only for a running service, after the run loop's
+    # signal handler exists so helper loss always shuts down gracefully.
+    (
+        'cmd/sing-box/cmd_run.go',
+        '\t"github.com/sagernet/sing-box/adapter"\n',
+        '\t"github.com/sagernet/sing-box/adapter"\n'
+        '\tandroidsystemdns "github.com/sagernet/sing-box/common/androidcli/systemdns"\n',
+    ),
+    (
+        'cmd/sing-box/cmd_run.go',
+        '\tsignal.Notify(osSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)\n'
+        '\tdefer signal.Stop(osSignals)\n'
+        '\tfor {\n',
+        '\tsignal.Notify(osSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)\n'
+        '\tdefer signal.Stop(osSignals)\n'
+        '\tdefer androidsystemdns.StartService(".")()\n'
+        '\tfor {\n',
     ),
 )
 
@@ -79,6 +108,9 @@ def prepare_sources(repo, core):
     if environment.exists():
         raise ValueError(f'Upstream now owns {environment}')
     shutil.copytree(repo / 'environment', environment)
+    # build_shared.py generates this package's embedded helper dex.
+    shutil.copytree(repo / 'native/systemdns', environment / 'systemdns',
+                    ignore=shutil.ignore_patterns('*_test.go', 'java'))
     inject_patches(repo, core)
     patch_sources(core)
     injected = {(core / destination_rel).resolve() for _, destination_rel in INJECTED_FILES}

@@ -13,7 +13,7 @@ The Java package remains `io.nekohasekai.libbox`. The upstream libbox API and Sa
 
 ## Build
 
-Install Go (version in `go.mod`), Python 3.10+, a JDK, Android SDK, and NDK. Set `ANDROID_HOME`, `ANDROID_NDK_HOME`, and `JAVA_HOME`.
+Install Go (version in `go.mod`), Python 3.10+, JDK 21+, Android SDK (platform 37.0 and Build Tools 37.0.0), and NDK. Set `ANDROID_HOME`, `ANDROID_NDK_HOME`, and `JAVA_HOME`.
 
 ```sh
 python3 scripts/build_shared.py
@@ -39,6 +39,16 @@ Execute `libsing-box.so` directly from the application's native library director
 The launcher resolves its sibling through `/proc/self/exe`. It does not need copying into the working directory. `ANDROID_BOX_LIBRARY` optionally specifies an absolute path to `libbox.so`; the exported ABI is `AndroidBoxCLI_v1` and is for standalone processes only. JNI callers continue to use the generated Java API. Native extraction must be enabled by the consuming app so both files exist on disk.
 
 CLI and JNI share the native file, not a running process. The launcher imports the native environment and restores standard output/error before running the upstream command. `GOGC`, `GOMEMLIMIT`, and `GOMAXPROCS` are restored explicitly for the shared Go runtime. Custom standalone CLI support remains the consuming application's responsibility.
+
+## ROOT system DNS integration
+
+Android has no `/etc/resolv.conf`, so upstream's `local` DNS server falls back to `127.0.0.1:53`. A running standalone CLI (`run`) with effective UID 0 therefore starts its own Java network observer; JNI and other CLI commands (`version`, `check`, `format`, ...) do not. The observer uses ConnectivityManager / LinkProperties to supply physical-network DNS addresses, and the `local` transport queries them from the core's own sockets. Android's resolver is never asked to perform the lookup, so ROOT routing that exempts the core by owner also covers these queries.
+
+The build compiles `native/systemdns/java` with javac and SDK D8, then embeds the single dex in `libbox.so`. At startup the core verifies and reuses `<working-directory>/system-dns-helper.dex`, or atomically replaces it from the embedded bytes. The file is root-owned, mode 0400, and retained at exit with any ART cache.
+
+An anonymous socketpair carries version 1 address snapshots directly to the core as fd 0 and fd 3; no named socket is created. Helper failure, including loss of the connectivity service when system_server restarts, clears DNS and shuts the core down gracefully with status 70. JNI continues to use the platform's `LocalDNSTransport`.
+
+Host tests: `go test ./native/systemdns` (file-cache tests need Linux or Android). AVD regression: `tools/test_root_system_dns_core.py`.
 
 ## Updates and releases
 

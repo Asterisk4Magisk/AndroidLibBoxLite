@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	androidcli "github.com/sagernet/sing-box/cmd/sing-box"
+	androidsystemdns "github.com/sagernet/sing-box/common/androidcli/systemdns"
 )
 
 // AndroidBoxCLI_v1 is only for a standalone process, never a JNI caller.
@@ -27,5 +28,5 @@ func AndroidBoxCLI_v1(argc C.int, argv **C.char, stdoutFD, stderrFD C.int) C.int
 		os.Args[i] = C.GoString(arg)
 	}
 	androidcli.Run()
-	return 0
+	return C.int(androidsystemdns.ExitCode())
 }
