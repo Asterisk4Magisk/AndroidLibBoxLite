@@ -21,7 +21,7 @@ python3 scripts/build_shared.py
 python3 scripts/build_shared.py --arch arm64 --work-dir work --output libbox.aar
 ```
 
-On Windows, use `python` instead of `python3`. Build tags are maintained locally in `build_tags.txt`. Core updates do not change this list. Shared linker flags follow the pinned upstream `release/LDFLAGS`. JNI and CLI use the same tag set. The minimum Android API remains 23. Sources are copied to a temporary workspace, preserving upstream dependency replacements. The checkout and Go module cache are not patched. No Gradle project is needed.
+On Windows, use `python` instead of `python3`. Build tags are maintained locally in `build_tags.txt`. Core updates do not change this list. Shared linker flags follow the pinned upstream `release/LDFLAGS`. JNI and CLI use the same tag set. The minimum Android API is 26. Sources are copied to a temporary workspace, preserving upstream dependency replacements. The checkout and Go module cache are not patched. No Gradle project is needed.
 
 Tailscale remains enabled with the same 11 `ts_omit_*` tags as the previous libbox build. These exclusions now apply to both JNI and CLI, including Tailscale SSH, Taildrop, and Drive. They do not disable the separate SSH outbound.
 

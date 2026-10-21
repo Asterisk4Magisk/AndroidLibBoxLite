@@ -197,12 +197,12 @@ def build(args, work):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--arch', nargs='+', choices=ARCHES, default=list(ARCHES))
-    parser.add_argument('--api', type=int, default=23)
+    parser.add_argument('--api', type=int, default=26)
     parser.add_argument('--output', default='libbox.aar')
     parser.add_argument('--work-dir', help='Retain native artifacts, generated sources and build logs')
     args = parser.parse_args()
-    if args.api < 23 or len(args.arch) != len(set(args.arch)):
-        parser.error('API must be >= 23 and architectures must be unique')
+    if args.api < 26 or len(args.arch) != len(set(args.arch)):
+        parser.error('API must be >= 26 and architectures must be unique')
     if args.work_dir:
         work = pathlib.Path(args.work_dir).resolve()
         work.mkdir(parents=True, exist_ok=True)

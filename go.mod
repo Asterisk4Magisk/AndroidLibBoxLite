@@ -1,6 +1,6 @@
 module androidlibbox
 
-go 1.27.1
+go 1.27
 
 require (
 	github.com/sagernet/gomobile v0.1.13

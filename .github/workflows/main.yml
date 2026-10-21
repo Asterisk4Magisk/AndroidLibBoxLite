@@ -51,12 +51,14 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          check-latest: true
 
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
+          check-latest: true
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
