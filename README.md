@@ -55,7 +55,7 @@ Host tests: `go test ./native/systemdns` (file-cache tests need Linux or Android
 - `go.mod` pins the reF1nd source tag and SagerNet gomobile version; `go.sum` verifies downloads.
 - `tidy.yml` checks upstream daily and on demand. It selects the highest semantic version with the `-reF1nd` suffix, including stable and preview tags. Alpha/beta/RC ordering is semantic; stable wins over previews of the same version. Synced original sing-box tags are excluded.
 - An update commits the module pins, creates a matching tag, and explicitly dispatches `main.yml` at that tag. Unpublished tags are retried; versions never move backwards.
-- `main.yml` builds all four ABIs on pushes, pull requests, and manual runs. Without `release_tag` it uploads workflow artifacts. With a matching tag (optionally suffixed `-android.N`), it creates/verifies the tag after a successful build and publishes the AAR and sources. Preview cores are marked as prereleases. Already published assets are preserved.
+- `main.yml` builds all four ABIs on pushes, pull requests, and manual runs. Without `release_tag` it uploads workflow artifacts. With a matching tag (optionally suffixed `-android.N`), it creates/verifies the tag after a successful build and publishes the AAR and sources. Already published assets are preserved.
 
 To publish this rewrite against an already released core tag, use a new tag such as `v1.15.0-alpha.6-reF1nd-android.1` rather than replacing existing release assets.
 

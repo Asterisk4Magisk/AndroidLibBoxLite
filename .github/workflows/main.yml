@@ -111,12 +111,12 @@ jobs:
         run: |
           if gh release view "$RELEASE_TAG" --json isDraft > release-state.json; then
             if [ "$(jq -r .isDraft release-state.json)" = false ]; then
+              gh release edit "$RELEASE_TAG" --prerelease=false
               echo 'Release is already published; keeping existing assets.'
               exit 0
             fi
           else
-            prerelease="$(python3 -c 'import pathlib,sys; sys.path.insert(0,"scripts"); from check_upstream import pinned,version; print(str(not version(pinned(pathlib.Path(".")))[3]).lower())')"
-            gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes --prerelease="$prerelease"
+            gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes --prerelease=false
           fi
           gh release upload "$RELEASE_TAG" libbox.aar libbox-sources.jar --clobber
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease=false
