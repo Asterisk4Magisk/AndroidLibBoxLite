@@ -50,6 +50,26 @@ An anonymous socketpair carries version 1 address snapshots directly to the core
 
 Host tests: `go test ./native/systemdns` (file-cache tests need Linux or Android). AVD regression: `tools/test_root_system_dns_core.py`.
 
+## Temporary REALITY compatibility
+
+The build aligns uTLS fingerprint names and selection rules with
+[Xray-core v26.10.21](https://github.com/XTLS/Xray-core/tree/1b1647cd9ddf0abc34b981d4611fc03bcac1ca74).
+`scripts/reality_compat.py` applies the dependency override and source patches
+only to staging; `patches/tls/reality_fingerprints.go` supplies the mappings.
+The fixed MetaCubeX uTLS revision is recorded in `go.mod` and `go.sum`.
+Native hybrid key shares are preserved, with hybrid X25519 authentication
+fallback when no standalone X25519 key is available. JNI and CLI share the fix.
+
+Use `chrome`, `firefox`, or `safari` for Xray 26.9.8+ servers. As in Xray, older
+presets and some random combinations can remain incompatible. The MetaCubeX
+TLS implementation and the core's advertised REALITY version are retained.
+The mapping's MPL-2.0 attribution and license are included in the AAR.
+
+When upstream supplies equivalent behavior, remove `REALITY_FILES` and
+`REALITY_PATCHES` from `prepare_sources.py`, the dependency/notice hooks from
+`build_shared.py`, and the uTLS replacement/checksums from `go.mod`/`go.sum`;
+then delete `scripts/reality_compat.py` and `patches/tls`.
+
 ## Updates and releases
 
 - `go.mod` pins the reF1nd source tag and SagerNet gomobile version; `go.sum` verifies downloads.

@@ -13,6 +13,7 @@ import zipfile
 
 from prepare_sources import prepare_sources
 from check_upstream import pinned, MODULE, FORK
+from reality_compat import package_reality_notices, prepare_reality_dependencies
 
 ARCHES = {
     'arm': ('armeabi-v7a', 'armv7a-linux-androideabi'),
@@ -145,6 +146,7 @@ def build(args, work):
     run(['go', 'mod', 'edit', '-go=' + run(['go', 'list', '-m', '-f', '{{.GoVersion}}'], repo, env),
          '-require=github.com/sagernet/gomobile@' + mobile], source, env)
     run(['go', 'mod', 'download', 'github.com/sagernet/gomobile'], source, env)
+    prepare_reality_dependencies(repo, source, env)
     ldflags = (f'-s -w -buildid= -X github.com/sagernet/sing-box/constant.Version={version[1:]} '
                + (source / 'release/LDFLAGS').read_text().strip())
     tools = work / 'tools'
@@ -184,6 +186,7 @@ def build(args, work):
         artifacts[abi] = (output / 'libbox.so', output / 'libsing-box.so')
     aar = stage / 'libbox.aar'
     package_aar(baseline, aar, artifacts)
+    package_reality_notices(repo, aar)
     target = pathlib.Path(args.output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(aar, target)

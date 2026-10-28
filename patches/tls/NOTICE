@@ -1,0 +1,18 @@
+AndroidLibBoxLite fingerprint compatibility
+
+reality_fingerprints.go is adapted from XTLS/Xray-core v26.10.21,
+commit 1b1647cd9ddf0abc34b981d4611fc03bcac1ca74,
+transport/internet/tls/tls.go, under the Mozilla Public License 2.0.
+The license is included as LICENSE-MPL-2.0.
+
+Corresponding compatibility source and modifications:
+https://github.com/Asterisk4Magisk/AndroidLibBoxLite/tree/main/patches/tls
+https://github.com/Asterisk4Magisk/AndroidLibBoxLite/blob/main/scripts/reality_compat.py
+
+Original source:
+https://github.com/XTLS/Xray-core/blob/1b1647cd9ddf0abc34b981d4611fc03bcac1ca74/transport/internet/tls/tls.go
+
+The build retains the MetaCubeX uTLS implementation at
+a6a364afbd13015e2d6da7d55f8ad4123f9fc0b9. Its Go-derived TLS code is
+BSD-licensed; its REALITY code retains its XTLS/REALITY MPL-2.0 origin.
+https://github.com/MetaCubeX/utls/tree/a6a364afbd13015e2d6da7d55f8ad4123f9fc0b9

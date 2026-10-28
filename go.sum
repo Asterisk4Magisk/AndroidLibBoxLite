@@ -1,3 +1,5 @@
+github.com/metacubex/utls v0.0.0-20261026164304-a6a364afbd13 h1:lXv1RLnNAMCvAVdsSwSVCDx1+agnOvMgpGwwaj0wlTA=
+github.com/metacubex/utls v0.0.0-20261026164304-a6a364afbd13/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
 github.com/reF1nd/sing-box v1.15.0-alpha.10-reF1nd h1:FIzIH0PDRrrxsRtpIrmcKetkZ3UO9m7VT47Zsw9/HPw=
 github.com/reF1nd/sing-box v1.15.0-alpha.10-reF1nd/go.mod h1:3EwkPDWzo43vGOlvqAeOZdELuUJipUAL59GaSH3zbr0=
 github.com/reF1nd/sing-box v1.15.0-alpha.11-reF1nd h1:4dVOGlE/zE66kKoCdls2UR7DoVGuqBbML8Gs8SXnyOg=

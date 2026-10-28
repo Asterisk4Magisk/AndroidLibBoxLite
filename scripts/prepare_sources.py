@@ -3,6 +3,8 @@ import pathlib
 import re
 import shutil
 
+from reality_compat import REALITY_FILES, REALITY_PATCHES
+
 ENVIRONMENT = 'github.com/sagernet/sing-box/common/androidcli'
 
 # Files injected verbatim into the staged upstream checkout as
@@ -10,6 +12,7 @@ ENVIRONMENT = 'github.com/sagernet/sing-box/common/androidcli'
 # AAR gains the custom URL test (urlTestWithOptions) without any change to
 # reF1nd/sing-box itself.
 INJECTED_FILES = (
+    *REALITY_FILES,
     ('patches/daemon/url_test_options.go', 'daemon/url_test_options.go'),
     ('patches/daemon/url_test_http3.go', 'daemon/url_test_http3.go'),
     ('patches/daemon/url_test_http3_stub.go', 'daemon/url_test_http3_stub.go'),
@@ -27,6 +30,7 @@ INJECTED_FILES = (
 # custom measurement when the request carries the options envelope (urltest
 # group targets stay on the stock CheckOutbounds path).
 PATCHES = (
+    *REALITY_PATCHES,
     (
         'daemon/started_service.go',
         '''\toutboundTag := request.OutboundTag
