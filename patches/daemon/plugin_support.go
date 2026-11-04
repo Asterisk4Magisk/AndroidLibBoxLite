@@ -422,6 +422,25 @@ func pluginExitCode(err error) int {
 	return -1
 }
 
+// StartPluginsFromConfig starts the CLI-mode plugin pool from the envelope the
+// app publishes next to its config file. The CLI's working directory is not
+// reliable (asteriskd runs the core with cwd "/"), so the config path decides.
+func StartPluginsFromConfig(configPaths []string) func() {
+	for _, configPath := range configPaths {
+		if configPath == "" {
+			continue
+		}
+		directory := filepath.Dir(configPath)
+		if directory == "" || directory == "." {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(directory, "plugin.json")); err == nil {
+			return StartPluginsFromDir(directory)
+		}
+	}
+	return StartPluginsFromDir(".")
+}
+
 // StartPluginsFromDir starts the CLI-mode plugin pool from <dir>/plugin.json,
 // the sidecar BOX publishes next to the core config in ROOT mode. A missing
 // sidecar means the start carries no plugins; the returned stop function is

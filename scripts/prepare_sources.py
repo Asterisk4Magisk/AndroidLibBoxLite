@@ -122,7 +122,7 @@ PATCHES = (
         'cmd/sing-box/cmd_run.go',
         '\tdefer androidsystemdns.StartService(".")()\n',
         '\tdefer androidsystemdns.StartService(".")()\n'
-        '\tdefer daemon.StartPluginsFromDir(".")()\n',
+        '\tdefer daemon.StartPluginsFromConfig(configPaths)()\n',
     ),
 )
 
