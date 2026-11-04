@@ -300,6 +300,11 @@ func (g *pluginGuard) start() error {
 	cmd := exec.Command(g.command[0], g.command[1:]...)
 	cmd.Dir = g.workingDir
 	cmd.Env = g.env
+	// Tie the plugin to this process: a core that is SIGKILLed (supervisor stop,
+	// crash) must not leave plugin processes behind.
+	if attribute := pluginDeathSignal(); attribute != nil {
+		cmd.SysProcAttr = attribute
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return E.Cause(err, g.name, ": stdout pipe")

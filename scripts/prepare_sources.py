@@ -25,6 +25,8 @@ INJECTED_FILES = (
     ('patches/daemon/plugin_protect_unix.go', 'daemon/plugin_protect_unix.go'),
     ('patches/daemon/plugin_protect_peer_linux.go', 'daemon/plugin_protect_peer_linux.go'),
     ('patches/daemon/plugin_protect_peer_stub.go', 'daemon/plugin_protect_peer_stub.go'),
+    ('patches/daemon/plugin_death_signal_linux.go', 'daemon/plugin_death_signal_linux.go'),
+    ('patches/daemon/plugin_death_signal_stub.go', 'daemon/plugin_death_signal_stub.go'),
     ('patches/experimental_libbox/command_server_plugins.go', 'experimental/libbox/command_server_plugins.go'),
 )
 
