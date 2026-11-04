@@ -9,15 +9,14 @@
 package daemon
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/sagernet/sing-box/log"
@@ -29,6 +28,8 @@ const (
 	// configuration error, not a crash loop; the service must stop.
 	pluginFatalExitWindow = time.Second
 	pluginStopGracePeriod = time.Second
+	// pluginMaxLineLength bounds one buffered log line before it is flushed raw.
+	pluginMaxLineLength = 1024 * 1024
 
 	pluginFileTokenPrefix = "${file:"
 	pluginFileTokenSuffix = "}"
@@ -296,48 +297,66 @@ func expandPluginFileTokens(value string, files map[string]string) string {
 	return builder.String()
 }
 
+var errPluginStopped = E.New("plugin process stopped")
+
 func (g *pluginGuard) start() error {
+	// Hold the lock across Start so a concurrent stop either sees the new
+	// process or prevents it from starting at all.
+	g.access.Lock()
+	defer g.access.Unlock()
+	if g.stopped {
+		return errPluginStopped
+	}
 	cmd := exec.Command(g.command[0], g.command[1:]...)
 	cmd.Dir = g.workingDir
 	cmd.Env = g.env
 	// Tie the plugin to this process: a core that is SIGKILLed (supervisor stop,
-	// crash) must not leave plugin processes behind.
+	// crash) must not leave plugin processes behind. The kernel keys this to the
+	// forking thread, so it is best-effort; pool.Close is the primary stop path.
 	if attribute := pluginDeathSignal(); attribute != nil {
 		cmd.SysProcAttr = attribute
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return E.Cause(err, g.name, ": stdout pipe")
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return E.Cause(err, g.name, ": stderr pipe")
-	}
-	if err = cmd.Start(); err != nil {
+	// Let os/exec own the pipes: Wait then drains them before returning, so the
+	// last lines a plugin prints before exiting are never dropped.
+	writer := &pluginLogWriter{name: g.name}
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Start(); err != nil {
 		return E.Cause(err, "start process ", g.name)
 	}
-	log.Info("start plugin process: ", strings.Join(g.command, " "))
-	g.access.Lock()
 	g.cmd = cmd
 	g.process = cmd.Process
-	g.access.Unlock()
-
-	go streamPluginLines(stdout, func(line string) {
-		log.Debug("[", g.name, "] ", line)
-	})
-	go streamPluginLines(stderr, func(line string) {
-		log.Debug("[", g.name, "] ", line)
-	})
+	log.Info("start plugin process: ", strings.Join(g.command, " "))
 	return nil
 }
 
-func streamPluginLines(reader io.Reader, logLine func(string)) {
-	scanner := bufio.NewScanner(reader)
-	// Plugin logs can be long; raise the token limit above the default 64KiB.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		logLine(scanner.Text())
+// pluginLogWriter turns arbitrary byte chunks into per-line core log entries.
+// It never blocks: an over-long line is flushed raw instead of stalling the
+// plugin on a full pipe.
+type pluginLogWriter struct {
+	name   string
+	access sync.Mutex
+	buffer []byte
+}
+
+func (w *pluginLogWriter) Write(p []byte) (int, error) {
+	w.access.Lock()
+	defer w.access.Unlock()
+	w.buffer = append(w.buffer, p...)
+	for {
+		index := bytes.IndexByte(w.buffer, '\n')
+		if index < 0 {
+			break
+		}
+		line := strings.TrimSuffix(string(w.buffer[:index]), "\r")
+		log.Debug("[", w.name, "] ", line)
+		w.buffer = w.buffer[index+1:]
 	}
+	if len(w.buffer) > pluginMaxLineLength {
+		log.Debug("[", w.name, "] ", string(w.buffer))
+		w.buffer = nil
+	}
+	return len(p), nil
 }
 
 func (g *pluginGuard) loop() {
@@ -363,6 +382,9 @@ func (g *pluginGuard) loop() {
 		default:
 		}
 		if err := g.start(); err != nil {
+			if err == errPluginStopped {
+				return
+			}
 			g.onFatal(E.Cause(err, "restart process ", g.name))
 			return
 		}
@@ -430,7 +452,10 @@ func pluginExitCode(err error) int {
 // StartPluginsFromConfig starts the CLI-mode plugin pool from the envelope the
 // app publishes next to its config file. The CLI's working directory is not
 // reliable (asteriskd runs the core with cwd "/"), so the config path decides.
-func StartPluginsFromConfig(configPaths []string) func() {
+//
+// A malformed envelope is an error: running without the plugins an outbound
+// needs would degrade the service silently.
+func StartPluginsFromConfig(configPaths []string) (func(), error) {
 	for _, configPath := range configPaths {
 		if configPath == "" {
 			continue
@@ -450,21 +475,20 @@ func StartPluginsFromConfig(configPaths []string) func() {
 // the sidecar BOX publishes next to the core config in ROOT mode. A missing
 // sidecar means the start carries no plugins; the returned stop function is
 // safe to defer.
-func StartPluginsFromDir(directory string) func() {
+func StartPluginsFromDir(directory string) (func(), error) {
 	content, err := os.ReadFile(filepath.Join(directory, "plugin.json"))
 	if err != nil {
-		if !os.IsNotExist(err) {
-			log.Error("read plugin envelope: ", err)
+		if os.IsNotExist(err) {
+			return func() {}, nil
 		}
-		return func() {}
+		return nil, E.Cause(err, "read plugin envelope")
 	}
 	options, err := ParsePluginOptions(string(content))
 	if err != nil {
-		log.Error("parse plugin envelope: ", err)
-		return func() {}
+		return nil, E.Cause(err, "parse plugin envelope")
 	}
 	if options == nil {
-		return func() {}
+		return func() {}, nil
 	}
 	pool, err := StartPluginPool(*options, nil, func(fatal error) {
 		// The core cannot serve an outbound whose plugin is gone: exit and let
@@ -476,12 +500,11 @@ func StartPluginsFromDir(directory string) func() {
 		}()
 	})
 	if err != nil {
-		log.Error("start plugin processes: ", err)
-		return func() {}
+		return nil, E.Cause(err, "start plugin processes")
 	}
 	return func() {
 		if closeErr := pool.Close(); closeErr != nil {
 			log.Error("stop plugin processes: ", closeErr)
 		}
-	}
+	}, nil
 }

@@ -41,11 +41,11 @@ func TestParsePluginOptions(t *testing.T) {
 func TestExpandPluginFileTokens(t *testing.T) {
 	files := map[string]string{"mieru.json": "/work/mieru.json"}
 	for input, expected := range map[string]string{
-		"${file:mieru.json}":       "/work/mieru.json",
-		"-c=${file:mieru.json}":    "-c=/work/mieru.json",
-		"${file:missing.json}":     "${file:missing.json}",
-		"${file:mieru.json}-x":     "/work/mieru.json-x",
-		"no-token":                 "no-token",
+		"${file:mieru.json}":                   "/work/mieru.json",
+		"-c=${file:mieru.json}":                "-c=/work/mieru.json",
+		"${file:missing.json}":                 "${file:missing.json}",
+		"${file:mieru.json}-x":                 "/work/mieru.json-x",
+		"no-token":                             "no-token",
 		"${file:mieru.json}${file:mieru.json}": "/work/mieru.json/work/mieru.json",
 	} {
 		if actual := expandPluginFileTokens(input, files); actual != expected {

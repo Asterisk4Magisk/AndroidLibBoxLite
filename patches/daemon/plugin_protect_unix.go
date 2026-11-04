@@ -90,17 +90,19 @@ func (s *pluginProtectServer) handle(conn *net.UnixConn) {
 }
 
 func (s *pluginProtectServer) handleRequest(conn *net.UnixConn) error {
-	file, err := receivePluginSocket(conn)
+	fd, err := receivePluginSocket(conn)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	// Pass the raw descriptor: wrapping it in os.File would make Fd() clear
+	// O_NONBLOCK on the open file description the plugin also uses.
+	defer unix.Close(fd)
 	if s.verify {
 		if err = verifyPluginPeer(conn); err != nil {
 			return err
 		}
 	}
-	return s.protect(int(file.Fd()))
+	return s.protect(fd)
 }
 
 func (s *pluginProtectServer) Close() error {
@@ -118,35 +120,31 @@ func (s *pluginProtectServer) Close() error {
 	return nil
 }
 
-func receivePluginSocket(conn *net.UnixConn) (*os.File, error) {
+func receivePluginSocket(conn *net.UnixConn) (int, error) {
 	payload := make([]byte, 1)
 	oob := make([]byte, unix.CmsgSpace(4))
 	_, oobn, _, _, err := conn.ReadMsgUnix(payload, oob)
 	if err != nil {
-		return nil, E.Cause(err, "read protect request")
+		return -1, E.Cause(err, "read protect request")
 	}
 	controlMessages, err := unix.ParseSocketControlMessage(oob[:oobn])
 	if err != nil {
-		return nil, E.Cause(err, "parse protect control message")
+		return -1, E.Cause(err, "parse protect control message")
 	}
 	var fds []int
 	for index := range controlMessages {
 		rights, rightsErr := unix.ParseUnixRights(&controlMessages[index])
 		if rightsErr != nil {
 			closePluginFiles(fds)
-			return nil, E.Cause(rightsErr, "parse protect rights")
+			return -1, E.Cause(rightsErr, "parse protect rights")
 		}
 		fds = append(fds, rights...)
 	}
 	if len(fds) != 1 {
 		closePluginFiles(fds)
-		return nil, E.New("protect request must carry exactly one socket")
+		return -1, E.New("protect request must carry exactly one socket")
 	}
-	file := os.NewFile(uintptr(fds[0]), "plugin-protect")
-	if file == nil {
-		return nil, E.New("invalid protect socket")
-	}
-	return file, nil
+	return fds[0], nil
 }
 
 func closePluginFiles(fds []int) {

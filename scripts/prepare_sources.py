@@ -91,7 +91,7 @@ PATCHES = (
         '}',
         '\tgrpcServer        *grpc.Server\n'
         '\tlistener          net.Listener\n'
-        '\tpluginPool        *daemon.PluginPool\n'
+        '\tpluginState       *pluginServerState\n'
         '}',
     ),
     (
@@ -124,7 +124,11 @@ PATCHES = (
         'cmd/sing-box/cmd_run.go',
         '\tdefer androidsystemdns.StartService(".")()\n',
         '\tdefer androidsystemdns.StartService(".")()\n'
-        '\tdefer daemon.StartPluginsFromConfig(configPaths)()\n',
+        '\tpluginStop, pluginErr := daemon.StartPluginsFromConfig(configPaths)\n'
+        '\tif pluginErr != nil {\n'
+        '\t\treturn pluginErr\n'
+        '\t}\n'
+        '\tdefer pluginStop()\n',
     ),
 )
 
