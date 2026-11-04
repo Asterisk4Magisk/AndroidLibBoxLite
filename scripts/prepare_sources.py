@@ -18,6 +18,14 @@ INJECTED_FILES = (
     ('patches/daemon/url_test_http3_stub.go', 'daemon/url_test_http3_stub.go'),
     ('patches/experimental_libbox/url_test_options.go', 'experimental/libbox/url_test_options.go'),
     ('patches/dns_systemconfig/source_managed.go', 'dns/transport/local/systemconfig/source_managed.go'),
+    # Plugin process support (Mieru / ShadowQUIC plugins): the pool lives in
+    # daemon, the plugin-aware start entry point in experimental/libbox.
+    ('patches/daemon/plugin_support.go', 'daemon/plugin_support.go'),
+    ('patches/daemon/plugin_support_test.go', 'daemon/plugin_support_test.go'),
+    ('patches/daemon/plugin_protect_unix.go', 'daemon/plugin_protect_unix.go'),
+    ('patches/daemon/plugin_protect_peer_linux.go', 'daemon/plugin_protect_peer_linux.go'),
+    ('patches/daemon/plugin_protect_peer_stub.go', 'daemon/plugin_protect_peer_stub.go'),
+    ('patches/experimental_libbox/command_server_plugins.go', 'experimental/libbox/command_server_plugins.go'),
 )
 
 # Surgical text patches applied to staged upstream files, as
@@ -71,6 +79,50 @@ PATCHES = (
         '\tdefer signal.Stop(osSignals)\n'
         '\tdefer androidsystemdns.StartService(".")()\n'
         '\tfor {\n',
+    ),
+    # experimental/libbox/command_server.go: hold the plugin pool on the
+    # server and tear it down wherever the service stops.
+    (
+        'experimental/libbox/command_server.go',
+        '\tgrpcServer        *grpc.Server\n'
+        '\tlistener          net.Listener\n'
+        '}',
+        '\tgrpcServer        *grpc.Server\n'
+        '\tlistener          net.Listener\n'
+        '\tpluginPool        *daemon.PluginPool\n'
+        '}',
+    ),
+    (
+        'experimental/libbox/command_server.go',
+        'func (s *CommandServer) Close() {\n'
+        '\tif s.grpcServer != nil {',
+        'func (s *CommandServer) Close() {\n'
+        '\ts.stopPlugins()\n'
+        '\tif s.grpcServer != nil {',
+    ),
+    (
+        'experimental/libbox/command_server.go',
+        'func (s *CommandServer) CloseService() error {\n'
+        '\treturn s.StartedService.CloseService()\n'
+        '}',
+        'func (s *CommandServer) CloseService() error {\n'
+        '\ts.stopPlugins()\n'
+        '\treturn s.StartedService.CloseService()\n'
+        '}',
+    ),
+    # cmd/sing-box/cmd_run.go: ROOT mode runs the core with -c, so the plugin
+    # envelope travels as <working dir>/plugin.json instead of a start call.
+    (
+        'cmd/sing-box/cmd_run.go',
+        '\tandroidsystemdns "github.com/sagernet/sing-box/common/androidcli/systemdns"\n',
+        '\tandroidsystemdns "github.com/sagernet/sing-box/common/androidcli/systemdns"\n'
+        '\t"github.com/sagernet/sing-box/daemon"\n',
+    ),
+    (
+        'cmd/sing-box/cmd_run.go',
+        '\tdefer androidsystemdns.StartService(".")()\n',
+        '\tdefer androidsystemdns.StartService(".")()\n'
+        '\tdefer daemon.StartPluginsFromDir(".")()\n',
     ),
 )
 
