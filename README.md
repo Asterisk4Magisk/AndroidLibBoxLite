@@ -50,6 +50,19 @@ An anonymous socketpair carries version 1 address snapshots directly to the core
 
 Host tests: `go test ./native/systemdns` (file-cache tests need Linux or Android). AVD regression: `tools/test_root_system_dns_core.py`.
 
+## Protocol plugins
+
+Protocols that ship as separate plugin APKs (Mieru, ShadowQUIC, ...) run as supervised child processes of the core and speak SOCKS to it over loopback. The app decides what runs; the core only supervises the processes an envelope describes. The envelope keeps the field names of Husi's plugin pool (`workingDir`, `protectPath`, `verifyPeer`, `plugins[].name/command/environment/files`), so its plugin packages work unchanged.
+
+- JNI: `CommandServer.startOrReloadServiceWithPlugins(config, overrides, envelope)`. An empty envelope behaves like `startOrReloadService`. A reload restarts only plugins whose spec changed; `closeService` and `close` stop them.
+- CLI `run`: reads `plugin.json` beside the first `-c` config that has one. The working directory is not searched. A plugin that cannot start or keep running shuts the core down gracefully with status 70.
+- `files` are written mode 0600 into `workingDir` and removed when the plugin stops; `${file:name}` in `command` or `environment` expands to the written path, and an unknown name fails the start. The command must be an absolute path.
+- A plugin that exits within 1 s of its first start fails the service. Later exits restart it with exponential backoff (1–30 s). Stopping sends SIGTERM to the plugin and, after 1 s, SIGKILL to its process group.
+- Plugins get their own process group and `PDEATHSIG`; every fork happens on a pinned thread, because the kernel ties `PDEATHSIG` to the forking thread and a JNI caller's thread may exit.
+- `protectPath` serves the protect-go protocol (one socket over `SCM_RIGHTS`, one reply byte) through the platform interface's `autoDetectInterfaceControl`. With `verifyPeer`, the peer must descend from the core. The socket persists across reloads. ROOT mode has no protector; its plugins dial a core inbound instead.
+
+Upstream changes are limited to `closePlugins` calls in `CommandServer.Close`/`CloseService` and one line beside the system DNS hook in `cmd_run.go`. The supervisor lives in `native/pluginpool`. Host tests: `go test ./native/pluginpool` (process tests need Linux or Android).
+
 ## Temporary REALITY compatibility
 
 The build aligns uTLS fingerprint names and selection rules with
