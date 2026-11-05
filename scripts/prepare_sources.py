@@ -18,6 +18,7 @@ INJECTED_FILES = (
     ('patches/daemon/url_test_http3_stub.go', 'daemon/url_test_http3_stub.go'),
     ('patches/experimental_libbox/url_test_options.go', 'experimental/libbox/url_test_options.go'),
     ('patches/dns_systemconfig/source_managed.go', 'dns/transport/local/systemconfig/source_managed.go'),
+    ('patches/experimental_libbox/command_server_plugins.go', 'experimental/libbox/command_server_plugins.go'),
 )
 
 # Surgical text patches applied to staged upstream files, as
@@ -54,12 +55,14 @@ PATCHES = (
         '\t\treturn config\n'
         '\t}\n',
     ),
-    # Start the observer only for a running service, after the run loop's
-    # signal handler exists so helper loss always shuts down gracefully.
+    # Start the observer and the plugins only for a running service, after the
+    # run loop's signal handler exists so helper or plugin loss always shuts
+    # down gracefully.
     (
         'cmd/sing-box/cmd_run.go',
         '\t"github.com/sagernet/sing-box/adapter"\n',
         '\t"github.com/sagernet/sing-box/adapter"\n'
+        '\tandroidpluginpool "github.com/sagernet/sing-box/common/androidcli/pluginpool"\n'
         '\tandroidsystemdns "github.com/sagernet/sing-box/common/androidcli/systemdns"\n',
     ),
     (
@@ -70,7 +73,21 @@ PATCHES = (
         '\tsignal.Notify(osSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)\n'
         '\tdefer signal.Stop(osSignals)\n'
         '\tdefer androidsystemdns.StartService(".")()\n'
+        '\tdefer androidpluginpool.StartService(configPaths)()\n'
         '\tfor {\n',
+    ),
+    # Plugins belong to the service: stop them wherever upstream stops it.
+    (
+        'experimental/libbox/command_server.go',
+        'func (s *CommandServer) Close() {\n',
+        'func (s *CommandServer) Close() {\n'
+        '\ts.closePlugins()\n',
+    ),
+    (
+        'experimental/libbox/command_server.go',
+        'func (s *CommandServer) CloseService() error {\n',
+        'func (s *CommandServer) CloseService() error {\n'
+        '\ts.closePlugins()\n',
     ),
 )
 
@@ -115,6 +132,8 @@ def prepare_sources(repo, core):
     # build_shared.py generates this package's embedded helper dex.
     shutil.copytree(repo / 'native/systemdns', environment / 'systemdns',
                     ignore=shutil.ignore_patterns('*_test.go', 'java'))
+    shutil.copytree(repo / 'native/pluginpool', environment / 'pluginpool',
+                    ignore=shutil.ignore_patterns('*_test.go'))
     inject_patches(repo, core)
     patch_sources(core)
     injected = {(core / destination_rel).resolve() for _, destination_rel in INJECTED_FILES}

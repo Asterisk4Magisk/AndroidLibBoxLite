@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	androidcli "github.com/sagernet/sing-box/cmd/sing-box"
+	androidpluginpool "github.com/sagernet/sing-box/common/androidcli/pluginpool"
 	androidsystemdns "github.com/sagernet/sing-box/common/androidcli/systemdns"
 )
 
@@ -28,5 +29,8 @@ func AndroidBoxCLI_v1(argc C.int, argv **C.char, stdoutFD, stderrFD C.int) C.int
 		os.Args[i] = C.GoString(arg)
 	}
 	androidcli.Run()
-	return C.int(androidsystemdns.ExitCode())
+	if code := androidsystemdns.ExitCode(); code != 0 {
+		return C.int(code)
+	}
+	return C.int(androidpluginpool.ExitCode())
 }
