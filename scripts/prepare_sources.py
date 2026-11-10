@@ -1,5 +1,4 @@
 """Adapt a writable upstream checkout for shared Android JNI/CLI use."""
-import pathlib
 import re
 import shutil
 
