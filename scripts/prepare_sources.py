@@ -32,6 +32,21 @@ INJECTED_FILES = (
 # custom measurement when the request carries the options envelope (urltest
 # group targets stay on the stock CheckOutbounds path).
 PATCHES = (
+    # TPROXY UDP's OriginDestination is its listener address. Ownership needs
+    # the actual packet destination, before the router rewrites it.
+    (
+        'route/process_cache.go',
+        '\t"github.com/sagernet/sing-box/adapter"\n',
+        '\t"github.com/sagernet/sing-box/adapter"\n'
+        '\tC "github.com/sagernet/sing-box/constant"\n',
+    ),
+    (
+        'route/process_cache.go',
+        '\tif metadata.OriginDestination.IsValid() {\n',
+        '\tif metadata.InboundType == C.TypeTProxy && metadata.Destination.IsIP() {\n'
+        '\t\toriginDestination = metadata.Destination.AddrPort()\n'
+        '\t} else if metadata.OriginDestination.IsValid() {\n',
+    ),
     (
         'protocol/socks/inbound.go',
         'func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.SocksInboundOptions) (adapter.Inbound, error) {\n',
@@ -106,6 +121,17 @@ PATCHES = (
 
 
 def patch_sources(core):
+    # Keep executable-path lookup upstream, but share the bridge's binary
+    # UID/inode query and UDP ambiguity handling with the other Android cores.
+    path = core / 'common/process/searcher_linux.go'
+    text = path.read_text(encoding='utf-8')
+    start = text.index('func (s *linuxSearcher) resolveSocketByNetlink(')
+    end = text.index('\nfunc buildProcessPaths(', start)
+    text = text[:start] + '''func (s *linuxSearcher) resolveSocketByNetlink(network string, source netip.AddrPort, destination netip.AddrPort) (inode, uid uint32, err error) {
+    return resolveFlowSocket(network, source, destination)
+}
+''' + text[end:]
+    path.write_text(text, encoding='utf-8')
     for destination_rel, old, new in PATCHES:
         path = core / destination_rel
         if not path.is_file():
