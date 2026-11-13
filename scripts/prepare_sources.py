@@ -11,6 +11,8 @@ ENVIRONMENT = 'github.com/sagernet/sing-box/common/androidcli'
 # AAR gains the custom URL test (urlTestWithOptions) without any change to
 # reF1nd/sing-box itself.
 INJECTED_FILES = (
+    ('patches/process/flow_owner.go', 'common/process/asterisk_flow_owner.go'),
+    ('patches/protocol_socks/flow.go', 'protocol/socks/asterisk_flow.go'),
     *REALITY_FILES,
     ('patches/daemon/url_test_options.go', 'daemon/url_test_options.go'),
     ('patches/daemon/url_test_http3.go', 'daemon/url_test_http3.go'),
@@ -30,6 +32,18 @@ INJECTED_FILES = (
 # custom measurement when the request carries the options envelope (urltest
 # group targets stay on the stock CheckOutbounds path).
 PATCHES = (
+    (
+        'protocol/socks/inbound.go',
+        'func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.SocksInboundOptions) (adapter.Inbound, error) {\n',
+        'func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.SocksInboundOptions) (adapter.Inbound, error) {\n'
+        '\tfor _, user := range options.Users {\n\t\tif user.Username == "__asterisk_flow_v1" {\n\t\t\treturn newFlowInbound(ctx, router, logger, tag, options, user.Password)\n\t\t}\n\t}\n',
+    ),
+    (
+        'route/process_cache.go',
+        'func (r *Router) searchProcessInfo(ctx context.Context, metadata *adapter.InboundContext) {\n',
+        'func (r *Router) searchProcessInfo(ctx context.Context, metadata *adapter.InboundContext) {\n'
+        '\tif metadata.ProcessInfo != nil && r.network != nil {\n\t\tprocess.CompleteFlowOwner(metadata.ProcessInfo, r.network.PackageManager())\n\t}\n',
+    ),
     *REALITY_PATCHES,
     (
         'daemon/started_service.go',
@@ -128,6 +142,7 @@ def prepare_sources(repo, core):
     if environment.exists():
         raise ValueError(f'Upstream now owns {environment}')
     shutil.copytree(repo / 'environment', environment)
+    shutil.copytree(repo / 'native/flowmeta', environment / 'flowmeta')
     # build_shared.py generates this package's embedded helper dex.
     shutil.copytree(repo / 'native/systemdns', environment / 'systemdns',
                     ignore=shutil.ignore_patterns('*_test.go', 'java'))

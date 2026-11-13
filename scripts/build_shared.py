@@ -154,6 +154,8 @@ def build(args, work):
     env['GOBIN'] = str(tools)
     env['PATH'] = str(tools) + os.pathsep + env['PATH']
     env['CGO_LDFLAGS'] = '-Wl,-z,max-page-size=16384'
+    # Cronet's exact archive name is rejected by Go 1.27.4's cgo flag filter.
+    env['CGO_LDFLAGS_ALLOW'] = r'-l:libcronet\.a'
     for name in ('gomobile', 'gobind'):
         run(['go', 'install', f'github.com/sagernet/gomobile/cmd/{name}@{mobile}'], source, env)
     baseline = stage / 'baseline.aar'
