@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import zipfile
 
-from prepare_sources import prepare_sources
+from prepare_sources import prepare_probe_cache, prepare_sources
 from check_upstream import pinned, MODULE, FORK
 from reality_compat import package_reality_notices, prepare_reality_dependencies
 
@@ -147,6 +147,7 @@ def build(args, work):
          '-require=github.com/sagernet/gomobile@' + mobile], source, env)
     run(['go', 'mod', 'download', 'github.com/sagernet/gomobile'], source, env)
     prepare_reality_dependencies(repo, source, env)
+    prepare_probe_cache(repo, source, env)
     ldflags = (f'-s -w -buildid= -X github.com/sagernet/sing-box/constant.Version={version[1:]} '
                + (source / 'release/LDFLAGS').read_text().strip())
     tools = work / 'tools'

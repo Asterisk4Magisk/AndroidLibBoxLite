@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package daemon;
+option go_package = "github.com/sagernet/sing-box/daemon";
+
+service ProxyIpProbeService {
+  rpc ProbeProxyIp(ProxyIpProbeRequest) returns (ProxyIpProbeResponse);
+}
+
+enum ProxyIpStatus {
+  PROXY_IP_STATUS_UNSPECIFIED = 0;
+  PROXY_IP_STATUS_OK = 1;
+  PROXY_IP_STATUS_TIMEOUT = 2;
+  PROXY_IP_STATUS_UNREACHABLE = 3;
+  PROXY_IP_STATUS_INVALID_RESPONSE = 4;
+  PROXY_IP_STATUS_BLOCKED = 5;
+}
+
+message ProxyIpProbeRequest {
+  reserved 2;
+  reserved "family";
+  string outbound_tag = 1;
+  string url = 3;
+}
+
+message ProxyIpProbeResponse {
+  reserved 2, 4;
+  reserved "family", "exit";
+  string outbound_tag = 1;
+  ProxyIpStatus status = 3;
+  string response = 5;
+}
