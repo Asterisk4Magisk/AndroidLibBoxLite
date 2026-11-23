@@ -60,16 +60,16 @@ jobs:
           java-version: '21'
           check-latest: true
 
-      - name: Setup Android SDK
+      - name: Set up Android command-line tools
         uses: android-actions/setup-android@v4
         with:
-          log-accepted-android-sdk-licenses: false
-          cmdline-tools-version: '14742923'
-          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+          accept-android-sdk-licenses: false
+          cmdline-tools-version: '15859902'
+          packages: ""
 
-      - name: Install NDK
+      - name: Install Android SDK packages
         run: |
-          sdkmanager 'ndk;28.2.13676358'
+          android --no-metrics --sdk="$ANDROID_HOME" sdk install platform-tools platforms/android-37.0 build-tools/37.0.0 ndk/28.2.13676358
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - name: Build
