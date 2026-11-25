@@ -35,8 +35,6 @@ type flowPacketInfo struct {
 	relay  M.Socksaddr
 }
 
-type flowContextKey struct{}
-
 func newFlowInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.SocksInboundOptions, token string) (adapter.Inbound, error) {
 	if len(token) != 32 {
 		return nil, flowmeta.ErrHeader
@@ -99,6 +97,9 @@ func (i *flowInbound) NewConnection(ctx context.Context, conn net.Conn, _ adapte
 		return
 	}
 	_ = conn.SetReadDeadline(time.Time{})
+	if h.UID == 0 || h.UID == flowmeta.UnknownUID {
+		ctx = flowmeta.ContextWithHeader(ctx, h)
+	}
 	i.router.RouteConnectionEx(ctx, conn, i.metadata(h), onClose)
 }
 
@@ -119,11 +120,11 @@ func (i *flowInbound) NewPacketBatch(buffers []*buf.Buffer, sources []M.Socksadd
 
 func (i *flowInbound) prepare(source, destination M.Socksaddr, data any) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
 	info := data.(flowPacketInfo)
-	return true, context.WithValue(log.ContextWithNewID(i.ctx), flowContextKey{}, info.header), &flowPacketWriter{i, info}, nil
+	return true, flowmeta.ContextWithHeader(log.ContextWithNewID(i.ctx), info.header), &flowPacketWriter{i, info}, nil
 }
 
 func (i *flowInbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	h := ctx.Value(flowContextKey{}).(flowmeta.Header)
+	h, _ := flowmeta.HeaderFromContext(ctx)
 	i.router.RoutePacketConnectionEx(ctx, conn, i.metadata(h), onClose)
 }
 

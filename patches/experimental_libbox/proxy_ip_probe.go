@@ -10,6 +10,7 @@ import (
 
 	"github.com/sagernet/sing-box/common/androidcli/proxyip"
 	"github.com/sagernet/sing-box/daemon"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -34,17 +35,12 @@ func (c *CommandClient) ProbeProxyIp(outboundTag string, url string, token strin
 	if !request.Valid() || handler == nil {
 		return nil, errors.New("a group tag, HTTPS URL and result handler are required")
 	}
-	if c.remote != nil && !proxyip.Loopback(c.remote.target) {
-		return nil, errors.New("proxy IP probe requires a local command endpoint")
-	}
-	c.clientAccess.RLock()
-	connection, parent := c.grpcConn, c.ctx
-	c.clientAccess.RUnlock()
-	if connection == nil || parent.Err() != nil {
-		return nil, errors.New("proxy IP probe requires a connected command client")
+	connection, parent, err := c.localExtensionConnection()
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	ctx = metadata.AppendToOutgoingContext(ctx, proxyip.TokenHeader, token)
+	ctx = withLocalExtensionToken(ctx, token)
 	input := &daemon.ProxyIpProbeRequest{OutboundTag: outboundTag, Url: url}
 	go func() {
 		defer cancel()
@@ -53,7 +49,7 @@ func (c *CommandClient) ProbeProxyIp(outboundTag string, url string, token strin
 			return
 		}
 		if err != nil {
-			handler.OnError(proxyIpErrorCode(status.Code(err)))
+			handler.OnError(commandRPCErrorCode(status.Code(err)))
 			return
 		}
 		sample, ok := proxyIpResult(request, response)
@@ -94,7 +90,24 @@ func proxyIpResult(request proxyip.Request, response *daemon.ProxyIpProbeRespons
 	return sample, true
 }
 
-func proxyIpErrorCode(code codes.Code) string {
+func (c *CommandClient) localExtensionConnection() (*grpc.ClientConn, context.Context, error) {
+	if c.remote != nil && !proxyip.Loopback(c.remote.target) {
+		return nil, nil, errors.New("local command endpoint required")
+	}
+	c.clientAccess.RLock()
+	connection, parent := c.grpcConn, c.ctx
+	c.clientAccess.RUnlock()
+	if connection == nil || parent == nil || parent.Err() != nil {
+		return nil, nil, errors.New("connected command client required")
+	}
+	return connection, parent, nil
+}
+
+func withLocalExtensionToken(ctx context.Context, token string) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, proxyip.TokenHeader, token)
+}
+
+func commandRPCErrorCode(code codes.Code) string {
 	switch code {
 	case codes.Unimplemented:
 		return "UNSUPPORTED"

@@ -32,15 +32,22 @@ func RegisterProxyIPProbe(server grpc.ServiceRegistrar, service *StartedService,
 	RegisterProxyIpProbeServiceServer(server, &proxyIpProbeServer{service: service, tokenDirectory: tokenDirectory})
 }
 
-func (s *proxyIpProbeServer) ProbeProxyIp(ctx context.Context, request *ProxyIpProbeRequest) (*ProxyIpProbeResponse, error) {
+func authenticateLocalExtension(ctx context.Context, tokenDirectory string) error {
 	remote, ok := peer.FromContext(ctx)
 	if !ok || remote.Addr == nil {
-		return nil, status.Error(codes.PermissionDenied, "missing local peer")
+		return status.Error(codes.PermissionDenied, "missing local peer")
 	}
 	_, unix := remote.Addr.(*net.UnixAddr)
 	tokens := metadata.ValueFromIncomingContext(ctx, proxyip.TokenHeader)
-	if !(unix || proxyip.Loopback(remote.Addr.String())) || len(tokens) != 1 || !proxyip.ValidToken(s.tokenDirectory, tokens[0]) {
-		return nil, status.Error(codes.PermissionDenied, "invalid probe credentials")
+	if !(unix || proxyip.Loopback(remote.Addr.String())) || len(tokens) != 1 || !proxyip.ValidToken(tokenDirectory, tokens[0]) {
+		return status.Error(codes.PermissionDenied, "invalid probe credentials")
+	}
+	return nil
+}
+
+func (s *proxyIpProbeServer) ProbeProxyIp(ctx context.Context, request *ProxyIpProbeRequest) (*ProxyIpProbeResponse, error) {
+	if err := authenticateLocalExtension(ctx, s.tokenDirectory); err != nil {
+		return nil, err
 	}
 
 	probe := proxyip.Request{OutboundTag: request.GetOutboundTag(), URL: request.GetUrl()}

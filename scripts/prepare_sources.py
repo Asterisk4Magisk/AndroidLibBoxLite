@@ -19,6 +19,13 @@ INJECTED_FILES = (
     ('patches/protocol_socks/flow.go', 'protocol/socks/asterisk_flow.go'),
     *REALITY_FILES,
     ('patches/daemon/proxy_ip_probe.go', 'daemon/proxy_ip_probe.go'),
+    ('patches/daemon/dns_events.go', 'daemon/dns_events.go'),
+    ('patches/daemon/dns_events.proto', 'daemon/dns_events.proto'),
+    ('patches/daemon/dns_events.pb.go', 'daemon/dns_events.pb.go'),
+    ('patches/daemon/dns_events_grpc.pb.go', 'daemon/dns_events_grpc.pb.go'),
+    ('patches/dns/events.go', 'dns/asterisk_dns_events.go'),
+    ('patches/dialer/dns_egress.go', 'common/dialer/asterisk_dns_egress.go'),
+    ('patches/experimental_libbox/dns_events.go', 'experimental/libbox/dns_events.go'),
     ('patches/daemon/proxy_ip_probe.proto', 'daemon/proxy_ip_probe.proto'),
     ('patches/daemon/proxy_ip_probe.pb.go', 'daemon/proxy_ip_probe.pb.go'),
     ('patches/daemon/proxy_ip_probe_grpc.pb.go', 'daemon/proxy_ip_probe_grpc.pb.go'),
@@ -144,6 +151,276 @@ func (g *LoadBalanceGroup) bindStrategy(pick func(*adapter.InboundContext, bool,
     yield (balance, '\t\treturn outbounds[fbIdx]\n\t}\n}', '\t\treturn outbounds[fbIdx]\n\t})\n}')
 
 
+def dns_event_patches():
+    event = ENVIRONMENT + '/dnsevents'
+    for path in (
+        'dns/router.go', 'dns/client_truncate.go',
+        'dns/transport/group.go', 'dns/transport/multiplexer.go', 'dns/transport/udp.go',
+        'protocol/dns/handle.go', 'route/dns.go',
+    ):
+        yield path, 'import (', f'import (\n\t"{event}"'
+    for path in (
+        'dns/transport/multiplexer.go',
+        'protocol/group/selector.go', 'protocol/group/urltest.go', 'protocol/group/loadbalance.go',
+    ):
+        yield path, 'import (', 'import (\n\t"github.com/sagernet/sing-box/common/dialer"'
+
+    for path, anchor, call in (
+        ('daemon/server.go', 'RegisterProxyIPProbe(server, startedService, ".")',
+         'RegisterDNSEvents(server, startedService, ".")'),
+        ('experimental/libbox/command_server.go',
+         'daemon.RegisterProxyIPProbe(s.grpcServer, s.StartedService, sBasePath)',
+         'daemon.RegisterDNSEvents(s.grpcServer, s.StartedService, sBasePath)'),
+    ):
+        yield path, anchor, anchor + '\n\t' + call
+
+    router = 'dns/router.go'
+    yield router, 'type Router struct {', 'type Router struct {\n\tdnsEvents dnsevents.Feed'
+    yield router, '\t\t\tr.closing = true', '\t\t\tr.closing = true\n\t\t\tr.dnsEvents.Close()'
+    yield (router, '\t\tcallback(earlyResponse, err)\n\t\treturn',
+           '\t\tdnsevents.ForRequest(ctx, message).Record(earlyResponse, dnsevents.Origin{Source: "local"})\n'
+           '\t\tcallback(earlyResponse, err)\n\t\treturn')
+    for ending in ('\n\t\t})', '\n\t\t}()'):
+        call = 'r.finishExchangeAsync(message, transport, response, exchangeErr, callback)' + ending
+        yield router, call, call.replace('Async(message', 'Async(ctx, message')
+    yield (router, 'r.finishExchangeAsync(message, result.transport,',
+           'r.finishExchangeAsync(ctx, message, result.transport,')
+    yield (router, 'func (r *Router) finishExchangeAsync(message *mDNS.Msg,',
+           'func (r *Router) finishExchangeAsync(ctx context.Context, message *mDNS.Msg,')
+    yield (router, '\tr.recordReverseMapping(message, response, transport)\n\tcallback(response, nil)',
+           '\tif transport == nil {\n'
+           '\t\tdnsevents.ForRequest(ctx, message).Record(response, dnsevents.Origin{Source: "local"})\n'
+           '\t}\n\tr.recordReverseMapping(message, response, transport)\n\tcallback(response, nil)')
+
+    client = 'dns/client.go'
+    yield (client, '\t"github.com/sagernet/sing-box/adapter"\n',
+           f'\t"github.com/sagernet/sing-box/adapter"\n\t"{event}"\n')
+    yield (client, '\t"github.com/sagernet/sing-box/common/compatible"\n',
+           '\t"github.com/sagernet/sing-box/common/compatible"\n\t"github.com/sagernet/sing-box/common/dialer"\n')
+    yield client, 'type exchangeOperation struct {', 'type exchangeOperation struct {\n\tdnsEvent        *dnsevents.Observation'
+    yield (client, 'allowWait bool) (*exchangeOperation, *dns.Msg, exchangeStatus, error) {\n\terr := ctx.Err()',
+           'allowWait bool) (*exchangeOperation, *dns.Msg, exchangeStatus, error) {\n'
+           '\tobservation := dnsevents.ForRequest(ctx, message)\n\terr := ctx.Err()')
+    yield (client, '\t\treturn nil, FixedResponseStatus(message, dns.RcodeSuccess), exchangeDone, nil',
+           '\t\tresponse := FixedResponseStatus(message, dns.RcodeSuccess)\n'
+           '\t\tobservation.Record(response, dnsevents.Origin{Source: "local"})\n'
+           '\t\treturn nil, response, exchangeDone, nil')
+    yield client, '\toperation := &exchangeOperation{', '\toperation := &exchangeOperation{\n\t\tdnsEvent:        observation,'
+    yield (client, '\t\t\t\tresponse.Id = message.Id\n\t\t\t\treturn nil, response, exchangeDone, nil',
+           '\t\t\t\tresponse.Id = message.Id\n'
+           '\t\t\t\tobservation.Record(response, dnsevents.Origin{Source: "cache"})\n'
+           '\t\t\t\treturn nil, response, exchangeDone, nil')
+    yield (client, '\toperation.ctx = adapter.ContextWithDNSTransportTag(',
+           '\tctx = dnsevents.WithAttempt(ctx, observation)\n'
+           '\tif dnsevents.ObservationEnabled() {\n\t\tctx = dialer.WithoutDNSEgress(ctx)\n\t}\n'
+           '\toperation.ctx = adapter.ContextWithDNSTransportTag(')
+    yield (client, '\tlogExchangedResponse(c.logger, ctx, response, timeToLive)\n\treturn response, nil',
+           '\tlogExchangedResponse(c.logger, ctx, response, timeToLive)\n'
+           '\tif operation.dnsEvent != nil {\n'
+           '\t\toperation.dnsEvent.Record(response, DNSEventOrigin(transport))\n'
+           '\t}\n\treturn response, nil')
+
+    # Retain the actual child transport when a DNS group races servers.
+    group = 'dns/transport/group.go'
+    yield group, '\t\ttag      string\n\t\terr      error', '\t\ttag      string\n\t\ttransport adapter.DNSTransport\n\t\terr      error'
+    yield (group, 'result{nil, tag, E.New("DNS server not found: ", tag)}',
+           'result{tag: tag, err: E.New("DNS server not found: ", tag)}')
+    yield group, 'result{response, tag, err}', 'result{response: response, tag: tag, transport: transport, err: err}'
+    yield (group, '\t\t\t\tt.logger.DebugContext(ctx, "fastest response from ", r.tag)',
+           '\t\t\t\tt.logger.DebugContext(ctx, "fastest response from ", r.tag)\n'
+           '\t\t\t\tif observation := dnsevents.Attempt(ctx); observation != nil {\n'
+           '\t\t\t\t\tobservation.Record(r.response, dns.DNSEventOrigin(r.transport))\n\t\t\t\t}')
+    base = 'dns/transport_adapter.go'
+    yield (base, '\ttransportType string\n\ttransportTag  string\n\tdependencies  []string\n\treferences    []string',
+           '\ttransportType  string\n\ttransportTag   string\n\tdependencies   []string\n\treferences     []string\n\tdnsEventDirect bool')
+    yield base, 'func (a *TransportAdapter) Type() string {', (
+        'func (a *TransportAdapter) DNSEventDirect() bool { return a.dnsEventDirect }\n\n'
+        'func (a *TransportAdapter) Type() string {')
+    anchor = ('\t\ttransportType: transportType,\n\t\ttransportTag:  transportTag,\n'
+              '\t\tdependencies:  dependencies,\n\t\treferences:    references,\n'
+              '\t}\n}\n\nfunc (a *TransportAdapter) DNSEventDirect')
+    yield base, anchor, (
+        '\t\ttransportType:  transportType,\n\t\ttransportTag:   transportTag,\n'
+        '\t\tdependencies:   dependencies,\n\t\treferences:     references,\n'
+        '\t\tdnsEventDirect: remoteOptions.Detour == "",\n'
+        '\t}\n}\n\nfunc (a *TransportAdapter) DNSEventDirect')
+    for path, receiver in (
+        ('udp.go', 'UDPTransport'), ('tcp.go', 'TCPTransport'), ('tls.go', 'TLSTransport'),
+        ('https.go', 'HTTPSTransport'), ('quic/quic.go', 'Transport'), ('quic/http3.go', 'HTTP3Transport'),
+    ):
+        anchor = f'func (t *{receiver}) Exchange(ctx context.Context,'
+        yield ('dns/transport/' + path, anchor,
+               f'func (t *{receiver}) DNSEventAddress() string {{ return t.serverAddr.String() }}\n\n' + anchor)
+
+    # Only DNS transports request egress tracing. Reuse each group's actual
+    # connection selection and interrupt lifecycle for those dials.
+    dialer_options = 'common/dialer/dialer.go'
+    yield dialer_options, '\tDefaultOutbound         bool\n', '\tDefaultOutbound         bool\n\tTraceDNSEgress          bool\n'
+    yield (dialer_options, '\t\tdetour.disableGSO = udpgso.Disabled(dialOptions.UDPGSO)\n',
+           '\t\tdetour.disableGSO = udpgso.Disabled(dialOptions.UDPGSO)\n'
+           '\t\tif options.TraceDNSEgress {\n\t\t\tdialer = &dnsDetourDialer{detour}\n\t\t}\n')
+    remote = 'dns/transport_dialer.go'
+    signature = 'func NewRemoteDialer(ctx context.Context, options option.RemoteDNSServerOptions) (N.Dialer, error) {'
+    yield (remote, signature, signature + """
+	return newRemoteDialer(ctx, options, false)
+}
+
+func NewRemoteDialerWithDNSEgress(ctx context.Context, options option.RemoteDNSServerOptions) (N.Dialer, error) {
+	return newRemoteDialer(ctx, options, true)
+}
+
+func newRemoteDialer(ctx context.Context, options option.RemoteDNSServerOptions, traceEgress bool) (N.Dialer, error) {""")
+    yield (remote, 'RemoteIsDomain: options.ServerIsDomain(),',
+           'RemoteIsDomain: options.ServerIsDomain(),\n\t\tTraceDNSEgress: traceEgress,')
+    for transport in ('udp', 'tcp', 'tls'):
+        yield (f'dns/transport/{transport}.go', 'dns.NewRemoteDialer(ctx,',
+               'dns.NewRemoteDialerWithDNSEgress(ctx,')
+    selector = 'protocol/group/selector.go'
+    yield (selector, '\tconn, err := s.selected.Load().DialContext(ctx, network, destination)',
+           '\tselected := s.selected.Load()\n\tconn, err := selected.DialContext(ctx, network, destination)')
+    for name, receiver, selected in (
+        ('selector', 'Selector', 'selected'), ('urltest', 'URLTest', 'outbound'), ('loadbalance', 'LoadBalance', 'outbound'),
+    ):
+        path = 'protocol/group/' + name + '.go'
+        signature = 'ctx context.Context, network string, destination M.Socksaddr'
+        result = '(net.Conn, error)'
+        header = f'func (s *{receiver}) DialContext({signature}) {result} {{'
+        yield (path, header, header +
+               '\n\treturn s.dialContext(ctx, network, destination, nil)\n}\n\n'
+               f'func (s *{receiver}) DialContextWithDNSEgress({signature}, trace *dialer.DNSEgressTrace) {result} {{\n'
+               '\treturn s.dialContext(ctx, network, destination, trace)\n}\n\n'
+               f'func (s *{receiver}) dialContext({signature}, trace *dialer.DNSEgressTrace) {result} {{')
+        anchor = f'\tconn, err := {selected}.DialContext(ctx, network, destination)'
+        yield (path, anchor, '\tvar conn net.Conn\n\tvar err error\n'
+               '\tif trace == nil {\n'
+               f'\t\tconn, err = {selected}.DialContext(ctx, network, destination)\n'
+               '\t} else {\n'
+               f'\t\tconn, err = dialer.DialOutboundWithDNSEgress(ctx, {selected}, network, destination, trace)\n'
+               '\t}')
+
+    mux = 'dns/transport/multiplexer.go'
+    yield mux, 'type queryMultiplexerOptions struct {', 'type queryMultiplexerOptions struct {\n\ttraceDNSEgress bool'
+    for transport in ('udp', 'tcp', 'tls'):
+        path = f'dns/transport/{transport}.go'
+        if transport != 'udp':
+            yield (path, 'adapter dns.TransportAdapter, dialer N.Dialer,',
+                   'adapter dns.TransportAdapter, dialerInstance N.Dialer,')
+        if transport == 'tcp':
+            yield path, '\t\tdialer:           dialer,', '\t\tdialer:           dialerInstance,'
+        if transport == 'tls':
+            yield path, 'tls.NewDialer(dialer, tlsConfig)', 'tls.NewDialer(dialerInstance, tlsConfig)'
+        anchor = 't.multiplexer = newQueryMultiplexer(queryMultiplexerOptions{'
+        yield path, anchor, anchor + '\n\t\ttraceDNSEgress: dialer.TracesDNSEgress(dialerInstance),'
+    yield mux, '\treadEpoch atomic.Uint64', '\treadEpoch atomic.Uint64\n\tdnsEventEgress dnsevents.Egress'
+    yield mux, '\tretryCtx    context.Context', '\tretryCtx    context.Context\n\tdnsEvent *dnsevents.Observation'
+    for fn in (
+        'exchangeSingle(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error))',
+        'dialConn(ctx context.Context) (*multiplexConn, error)',
+    ):
+        anchor = f'func (m *queryMultiplexer) {fn} {{\n\tconn, err := m.options.dial(ctx)'
+        yield (mux, anchor, anchor.replace('\tconn, err', '\tdialContext, trace := dialer.TrackDNSEgress(ctx, m.options.traceDNSEgress)\n\tconn, err')
+                                  .replace('m.options.dial(ctx)', 'm.options.dial(dialContext)'))
+    yield (mux, '\t\tresponse.Id = message.Id\n\t\tcallback(response, nil)',
+           '\t\tresponse.Id = message.Id\n'
+           '\t\tif egress := trace.Egress(conn); egress.Route != "" {\n'
+           '\t\t\tdnsevents.Attempt(ctx).Record(response, dnsevents.Origin{Egress: egress})\n\t\t}\n'
+           '\t\tcallback(response, nil)')
+    yield mux, '&multiplexConn{Conn: conn}', '&multiplexConn{Conn: conn, dnsEventEgress: trace.Egress(conn)}'
+    yield (mux, '\t\tcallback:  callback,\n\t}',
+           '\t\tcallback:  callback,\n\t}\n'
+           '\tif conn.dnsEventEgress.Route != "" {\n\t\tpending.dnsEvent = dnsevents.Attempt(ctx)\n\t}')
+    yield (mux, '\t\tresponse.Id = pending.message.Id',
+           '\t\tresponse.Id = pending.message.Id\n'
+           '\t\tpending.dnsEvent.Record(response, dnsevents.Origin{Egress: pending.conn.dnsEventEgress})')
+    udp = 'dns/transport/udp.go'
+    yield (udp, '\tconn, err := t.dialer.DialContext(ctx, N.NetworkTCP, t.serverAddr)',
+           '\tdialContext, trace := dialer.TrackDNSEgress(ctx, t.multiplexer.options.traceDNSEgress)\n'
+           '\tconn, err := t.dialer.DialContext(dialContext, N.NetworkTCP, t.serverAddr)')
+    yield (udp, '\t\treturn nil, E.Cause(err, "read response")\n\t}\n\treturn response, nil',
+           '\t\treturn nil, E.Cause(err, "read response")\n\t}\n'
+           '\tdnsevents.Attempt(ctx).Record(response, dnsevents.Origin{Scheme: "tcp", Egress: trace.Egress(conn)})\n'
+           '\treturn response, nil')
+
+    truncate = 'dns/client_truncate.go'
+    anchor = 'func TruncateDNSMessage(request *dns.Msg, response *dns.Msg, frontHeadroom int, rearHeadroom int) (*buf.Buffer, error) {'
+    yield (truncate, anchor, anchor + '''
+	return TruncateDNSMessageWithEvent(request, response, frontHeadroom, rearHeadroom, nil)
+}
+
+func TruncateDNSMessageWithEvent(request *dns.Msg, response *dns.Msg, frontHeadroom int, rearHeadroom int, observation *dnsevents.Observation) (*buf.Buffer, error) {''')
+    yield (truncate, '\t\tbuffer.Release()\n\t\treturn nil, err', '\t\tbuffer.Release()\n'
+           '\t\tobservation.Finish(response, nil, err)\n\t\treturn nil, err')
+    yield (truncate, '\tbuffer.Truncate(len(rawMessage))', '\tbuffer.Truncate(len(rawMessage))\n'
+           '\tobservation.Finish(response, &compressedResponse, nil)')
+
+    handle = 'protocol/dns/handle.go'
+    yield (handle, 'func HandleStreamDNSRequest(ctx context.Context, router adapter.DNSRouter, conn net.Conn, metadata adapter.InboundContext) error {',
+           'func HandleStreamDNSRequest(ctx context.Context, router adapter.DNSRouter, conn net.Conn, metadata adapter.InboundContext) error {\n'
+           '\treturn HandleStreamDNSRequestWithDestination(ctx, router, conn, metadata, metadata.Destination)\n}\n\n'
+           'func HandleStreamDNSRequestWithDestination(ctx context.Context, router adapter.DNSRouter, conn net.Conn, metadata adapter.InboundContext, destination M.Socksaddr) error {')
+    yield (handle, '\tmetadataInQuery := metadata\n\trouter.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery),',
+           '\tmetadataInQuery := metadata\n'
+           '\tctx, observation := dns.BeginClientDNSEvent(ctx, router, &message, &metadataInQuery, "tcp", destination.AddrPort(), buffer.Bytes())\n'
+           '\trouter.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery),')
+    yield handle, '\t\t\tconn.Close()\n\t\t\treturn', '\t\t\tobservation.Finish(nil, nil, err)\n\t\t\tconn.Close()\n\t\t\treturn'
+    yield handle, 'go writeStreamResponse(conn, response)', 'go writeStreamResponse(conn, response, observation)'
+    yield (handle, 'func writeStreamResponse(conn net.Conn, response *mDNS.Msg) {',
+           'func writeStreamResponse(conn net.Conn, response *mDNS.Msg, observation *dnsevents.Observation) {')
+    yield (handle, '\tif err != nil {\n\t\treturn\n\t}\n\tresponseBuffer.Truncate(len(n))',
+           '\tif err != nil {\n\t\tobservation.Finish(response, nil, err)\n\t\treturn\n\t}\n'
+           '\tobservation.Finish(response, &compressedResponse, nil)\n\tresponseBuffer.Truncate(len(n))')
+
+    route = 'route/dns.go'
+    yield (route, '\tr.searchProcessInfo(ctx, &metadata)\n\tmetadata.Destination = M.Socksaddr{}\n',
+           '\tr.searchProcessInfo(ctx, &metadata)\n\tdestination := metadata.Destination\n\tmetadata.Destination = M.Socksaddr{}\n')
+    yield (route, 'dnsOutbound.HandleStreamDNSRequest(ctx, r.dns, conn, metadata)',
+           'dnsOutbound.HandleStreamDNSRequestWithDestination(ctx, r.dns, conn, metadata, destination)')
+    yield (route, '\tr.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata),',
+           '\tctx, observation := dns.BeginClientDNSEvent(ctx, r.dns, &message, &metadata, "udp", destination.AddrPort(), payload)\n'
+           '\tr.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata),')
+    yield (route, '\t\t\texchangeErr = r.writeDNSPacketResponse(&message, response, writer, destination)\n\t\t}',
+           '\t\t\texchangeErr = r.writeDNSPacketResponse(&message, response, writer, destination, observation)\n'
+           '\t\t} else {\n\t\t\tobservation.Finish(nil, nil, exchangeErr)\n\t\t}')
+    yield (route, 'writer N.PacketWriter, destination M.Socksaddr) error {\n\tresponseBuffer, err := dns.TruncateDNSMessage('
+           'message, response, N.CalculateFrontHeadroom(writer), N.CalculateRearHeadroom(writer))',
+           'writer N.PacketWriter, destination M.Socksaddr, observation *dnsevents.Observation) error {\n'
+           '\tresponseBuffer, err := dns.TruncateDNSMessageWithEvent('
+           'message, response, N.CalculateFrontHeadroom(writer), N.CalculateRearHeadroom(writer), observation)')
+
+
+def patch_dns_packet_handlers(core):
+    file = core / 'protocol/dns/handle.go'
+    text = file.read_text(encoding='utf-8')
+    start = text.index('func NewDNSPacketConnection(')
+    split = text.index('func newDNSPacketConnection(', start)
+    head = text[:start]
+    anchor = 'func(response *mDNS.Msg, err error) {\n\t\t\t\tif err != nil {\n\t\t\t\t\tcancel(err)'
+    for index, section in enumerate((text[start:split], text[split:])):
+        unpack_error = '\t\t\t\tif err != nil {\n\t\t\t\t\tcancel(err)\n\t\t\t\t\treturn err\n\t\t\t\t}\n'
+        cached_unpack = '\t\t\t\terr = message.Unpack(packet.Buffer.Bytes())\n\t\t\t\tpacket.Buffer.Release()\n'
+        if index == 0:
+            section = replace_once(section, '\t\t\tvar err error\n', '\t\t\tvar err error\n\t\t\tvar buffer *buf.Buffer\n')
+            section = replace_once(section, cached_unpack + unpack_error, '\t\t\t\tbuffer = packet.Buffer\n')
+            section = replace_once(section, '\t\t\t\tbuffer := buf.NewPacket()\n', '\t\t\t\tbuffer = buf.NewPacket()\n')
+        else:
+            section = replace_once(section, cached_unpack, '\t\t\t\tbuffer = packet.Buffer\n')
+            section = replace_once(section, '\t\t\t\tN.PutPacketBuffer(packet)\n' + unpack_error,
+                                   '\t\t\t\tN.PutPacketBuffer(packet)\n')
+        section = replace_once(section, '\t\t\t\terr = message.Unpack(buffer.Bytes())\n\t\t\t\tbuffer.Release()\n' + unpack_error, '')
+        section = replace_once(section, '\t\t\tmetadataInQuery := metadata\n\t\t\trouter.ExchangeAsync(',
+                               '\t\t\terr = message.Unpack(buffer.Bytes())\n'
+                               '\t\t\tif err != nil {\n\t\t\t\tbuffer.Release()\n\t\t\t\tcancel(err)\n\t\t\t\treturn err\n\t\t\t}\n'
+                               '\t\t\tmetadataInQuery := metadata\n'
+                               '\t\t\tctx, observation := dns.BeginClientDNSEvent(ctx, router, &message, &metadataInQuery, "udp", destination.AddrPort(), buffer.Bytes())\n'
+                               '\t\t\tbuffer.Release()\n'
+                               '\t\t\trouter.ExchangeAsync(')
+        section = replace_once(section, anchor, anchor.replace('\t\t\t\t\tcancel(err)',
+                               '\t\t\t\t\tobservation.Finish(nil, nil, err)\n\t\t\t\t\tcancel(err)'))
+        head += replace_once(section, 'dns.TruncateDNSMessage(&message, response, frontHeadroom, rearHeadroom)',
+                             'dns.TruncateDNSMessageWithEvent(&message, response, frontHeadroom, rearHeadroom, observation)')
+    file.write_text(head, encoding='utf-8')
+
+
 # Surgical text patches applied to staged upstream files, as
 # (destination-relative-to-staged-core, old, new). Each old snippet must
 # occur exactly once; an upstream bump that moves it fails the build loudly
@@ -183,6 +460,7 @@ PATCHES = (
     ),
     *REALITY_PATCHES,
     *proxy_ip_patches(),
+    *dns_event_patches(),
     (
         'daemon/started_service.go',
         '''\toutboundTag := request.OutboundTag
@@ -261,6 +539,7 @@ def patch_sources(core):
             raise ValueError(f'Missing upstream file for patch: {path}')
         text = path.read_text(encoding='utf-8')
         path.write_text(replace_once(text, old, new), encoding='utf-8')
+    patch_dns_packet_handlers(core)
 
 
 def replace_once(text, old, new):
@@ -298,6 +577,7 @@ def prepare_sources(repo, core):
     shutil.copytree(repo / 'native/pluginpool', environment / 'pluginpool',
                     ignore=shutil.ignore_patterns('*_test.go'))
     shutil.copytree(repo / 'native/proxyip', environment / 'proxyip')
+    shutil.copytree(repo / 'native/dnsevents', environment / 'dnsevents')
     inject_patches(repo, core)
     patch_sources(core)
     injected = {(core / destination_rel).resolve() for _, destination_rel in INJECTED_FILES}

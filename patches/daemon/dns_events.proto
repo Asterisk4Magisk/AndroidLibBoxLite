@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package daemon;
+option go_package = "github.com/sagernet/sing-box/daemon";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
+
+service DnsEventsService {
+  rpc GetDnsEventsVersion(google.protobuf.Empty) returns (google.protobuf.UInt32Value);
+  rpc SubscribeDnsEvents(google.protobuf.Empty) returns (stream google.protobuf.StringValue);
+}

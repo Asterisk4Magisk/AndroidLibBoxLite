@@ -40,6 +40,21 @@ The launcher resolves its sibling through `/proc/self/exe`. It does not need cop
 
 CLI and JNI share the native file, not a running process. The launcher imports the native environment and restores standard output/error before running the upstream command. `GOGC`, `GOMEMLIMIT`, and `GOMAXPROCS` are restored explicitly for the shared Go runtime. Custom standalone CLI support remains the consuming application's responsibility.
 
+## Local Command API
+
+The Command API also provides `daemon.DnsEventsService`. Android callers
+use `CommandClient.getDnsEventsVersion(token)` to check for version `1`
+(`0` indicates an older core) and `subscribeDnsEvents(token, handler)` to
+receive one JSON event per callback. Close the returned session when collection
+ends. The calls use the usual API credentials and the 64-digit hex
+`x-asterisk-probe-token` from `proxy-ip-probe.token` in the command server's
+base directory or the standalone core's working directory. Events include the
+question, result and elapsed time, with source, upstream, route and UID when
+available. `uidSource` is `enhance` for the original UID from AsteriskEnhance
+or `socket` for connection ownership. In ROOT, a matching AsteriskEnhance
+UID takes precedence. Delivery is best effort and events can be dropped under load.
+An event’s answer list is limited to 64 records or 8 KiB of uncompressed DNS record data.
+
 ## ROOT system DNS integration
 
 Android has no `/etc/resolv.conf`, so upstream's `local` DNS server falls back to `127.0.0.1:53`. A running standalone CLI (`run`) with effective UID 0 therefore starts its own Java network observer; JNI and other CLI commands (`version`, `check`, `format`, ...) do not. The observer uses ConnectivityManager / LinkProperties to supply physical-network DNS addresses, and the `local` transport queries them from the core's own sockets. Android's resolver is never asked to perform the lookup, so ROOT routing that exempts the core by owner also covers these queries.

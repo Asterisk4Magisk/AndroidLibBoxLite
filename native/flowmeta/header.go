@@ -9,6 +9,7 @@ package flowmeta
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/binary"
 	"errors"
@@ -175,3 +176,14 @@ type OwnerAddr struct {
 
 func (a OwnerAddr) FlowUID() uint32   { return a.UID }
 func (a OwnerAddr) RawAddr() net.Addr { return a.Addr }
+
+type headerContextKey struct{}
+
+func ContextWithHeader(ctx context.Context, header Header) context.Context {
+	return context.WithValue(ctx, headerContextKey{}, header)
+}
+
+func HeaderFromContext(ctx context.Context) (Header, bool) {
+	header, ok := ctx.Value(headerContextKey{}).(Header)
+	return header, ok
+}
