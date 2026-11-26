@@ -175,7 +175,15 @@ def dns_event_patches():
         yield path, anchor, anchor + '\n\t' + call
 
     router = 'dns/router.go'
-    yield router, 'type Router struct {', 'type Router struct {\n\tdnsEvents dnsevents.Feed'
+    yield router, 'type Router struct {', 'type Router struct {\n\tdnsEvents dnsevents.Feed\n\tdnsEventFindProcess bool'
+    yield (router, 'options option.DNSOptions) (*Router, error)',
+           'options option.DNSOptions, findProcess bool) (*Router, error)')
+    yield router, 'router := &Router{', 'router := &Router{\n\t\tdnsEventFindProcess: findProcess,'
+    yield ('box.go', 'dns.NewRouter(ctx, logFactory, dnsOptions)',
+           'dns.NewRouter(ctx, logFactory, dnsOptions, routeOptions.FindProcess)')
+    yield router, '\t\tmonitor.Start("initialize DNS client")', (
+        '\t\tr.dnsEvents.StartCollection()\n\t\tmonitor.Start("initialize DNS client")'
+    )
     yield router, '\t\t\tr.closing = true', '\t\t\tr.closing = true\n\t\t\tr.dnsEvents.Close()'
     yield (router, '\t\tcallback(earlyResponse, err)\n\t\treturn',
            '\t\tdnsevents.ForRequest(ctx, message).Record(earlyResponse, dnsevents.Origin{Source: "local"})\n'

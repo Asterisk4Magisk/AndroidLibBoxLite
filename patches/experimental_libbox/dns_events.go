@@ -11,13 +11,15 @@ import (
 	"github.com/sagernet/sing-box/common/androidcli/dnsevents"
 	"github.com/sagernet/sing-box/daemon"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type DnsEventsHandler interface {
 	OnReady()
-	OnEvent(eventJSON string)
+	// OnEvent receives a JSON record or an NDJSON batch.
+	OnEvent(payload string)
 	OnError(code string)
 }
 
@@ -55,6 +57,16 @@ func (c *CommandClient) GetDnsEventsVersion(token string) (int32, error) {
 }
 
 func (c *CommandClient) SubscribeDnsEvents(token string, handler DnsEventsHandler) (*DnsEventsSession, error) {
+	return c.subscribeDnsEvents(token, handler, false)
+}
+
+// SubscribeDnsEventBatches sends NDJSON to OnEvent. A legacy core sends one
+// JSON record per callback, which is also a valid single-line batch.
+func (c *CommandClient) SubscribeDnsEventBatches(token string, handler DnsEventsHandler) (*DnsEventsSession, error) {
+	return c.subscribeDnsEvents(token, handler, true)
+}
+
+func (c *CommandClient) subscribeDnsEvents(token string, handler DnsEventsHandler, batched bool) (*DnsEventsSession, error) {
 	if handler == nil {
 		return nil, errors.New("a DNS events handler is required")
 	}
@@ -64,6 +76,9 @@ func (c *CommandClient) SubscribeDnsEvents(token string, handler DnsEventsHandle
 	}
 	ctx, cancel := context.WithCancel(parent)
 	ctx = withLocalExtensionToken(ctx, token)
+	if batched {
+		ctx = metadata.AppendToOutgoingContext(ctx, dnsevents.FormatHeader, dnsevents.FormatNDJSON)
+	}
 	go func() {
 		defer cancel()
 		err := readDnsEvents(ctx, client, handler)

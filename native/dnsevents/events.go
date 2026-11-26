@@ -17,6 +17,8 @@ import (
 
 const Version = 1
 const VersionHeader = "x-asterisk-dns-events-version"
+const FormatHeader = "x-asterisk-dns-events-format"
+const FormatNDJSON = "ndjson"
 
 type Answer struct {
 	Name string `json:"name"`
@@ -39,16 +41,20 @@ type Event struct {
 	OutboundTag  string    `json:"outboundTag,omitempty"`
 	UID          *uint32   `json:"uid,omitempty"`
 	UIDSource    string    `json:"uidSource,omitempty"`
-	wireAnswers  []D.RR
-	origin       Origin
 }
 
-func (e Event) format() Event {
+type pendingEvent struct {
+	Event
+	wireAnswers []D.RR
+	origin      Origin
+}
+
+func (e pendingEvent) format() Event {
 	if e.Rcode != nil {
 		answers := make([]Answer, 0, len(e.wireAnswers))
 		for _, record := range e.wireAnswers {
 			header := record.Header()
-			data := strings.TrimSpace(strings.TrimPrefix(record.String(), header.String()))
+			data := answerData(record)
 			answers = append(answers, Answer{Name: header.Name, Type: header.Rrtype, Data: data})
 		}
 		e.Answers = &answers
@@ -57,9 +63,27 @@ func (e Event) format() Event {
 	if e.UID != nil {
 		e.UIDSource = "socket"
 	}
-	e.wireAnswers = nil
-	e.origin = Origin{}
-	return e
+	return e.Event
+}
+
+func answerData(record D.RR) string {
+	switch record := record.(type) {
+	case *D.A:
+		if record.A == nil {
+			return ""
+		}
+		return record.A.String()
+	case *D.AAAA:
+		if record.AAAA == nil {
+			return ""
+		}
+		if record.AAAA.To4() != nil {
+			return "::ffff:" + record.AAAA.String()
+		}
+		return record.AAAA.String()
+	default:
+		return strings.TrimSpace(strings.TrimPrefix(record.String(), record.Header().String()))
+	}
 }
 
 type FeedProvider interface {
@@ -80,29 +104,32 @@ func ObservationEnabled() bool { return observingFeeds.Load() != 0 }
 
 func (f *Feed) Enabled() bool { return f != nil && f.queue.Load() != nil }
 
-func (f *Feed) Subscribe() (<-chan Event, func(), bool) {
+func (f *Feed) StartCollection() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.closed {
-		return nil, nil, false
+	if !f.closed && f.queue.Load() == nil {
+		queue := newEventQueue()
+		f.queue.Store(queue)
+		observingFeeds.Add(1)
+		go queue.run(f.publish)
+	}
+}
+
+func (f *Feed) Subscribe() ([]Event, <-chan Event, func(), bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	queue := f.queue.Load()
+	if queue == nil {
+		return nil, nil, nil, false
 	}
 	reader := make(chan Event, eventQueueCapacity)
 	if f.readers == nil {
 		f.readers = make(map[chan Event]struct{})
 	}
 	f.readers[reader] = struct{}{}
-	if f.queue.Load() == nil {
-		queue := newEventQueue()
-		f.queue.Store(queue)
-		observingFeeds.Add(1)
-		go queue.run(f.publish)
-	}
-	return reader, func() {
+	return queue.snapshot(), reader, func() {
 		f.mu.Lock()
 		delete(f.readers, reader)
-		if len(f.readers) == 0 {
-			f.stopQueue()
-		}
 		f.mu.Unlock()
 	}, true
 }
@@ -133,6 +160,7 @@ func (f *Feed) publish(queue *eventQueue, event Event) {
 	}
 	f.seq++
 	event.Seq = f.seq
+	queue.remember(event)
 	for reader := range f.readers {
 		sendLatest(reader, event)
 	}
@@ -268,10 +296,10 @@ func (o *Observation) Finish(response, wireResponse *D.Msg, err error) {
 		return
 	}
 	now := time.Now()
-	event := Event{
+	event := pendingEvent{Event: Event{
 		Time: now.UnixMilli(), Delay: now.Sub(o.start).Milliseconds(),
 		Qname: o.question.Name, Qtype: o.question.Qtype, Status: "failed", UID: o.uid,
-	}
+	}}
 	switch {
 	case wireResponse != nil:
 		event.Status = "answered"

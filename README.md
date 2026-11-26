@@ -45,12 +45,20 @@ CLI and JNI share the native file, not a running process. The launcher imports t
 The Command API also provides `daemon.DnsEventsService`. Android callers
 use `CommandClient.getDnsEventsVersion(token)` to check for version `1`
 (`0` indicates an older core) and `subscribeDnsEvents(token, handler)` to
-receive one JSON event per callback. Close the returned session when collection
-ends. The calls use the usual API credentials and the 64-digit hex
+receive one JSON event per callback. Use `subscribeDnsEventBatches(token, handler)`
+to receive NDJSON batches through the same callback. The client requests
+`x-asterisk-dns-events-format: ndjson` and the server echoes the header
+when batching is available. Cores with the original DNS API send one live
+event per callback.
+The current core replays up to 1,000 recent events in either stream, oldest first,
+then sends live events. A batch stream sends its last history batch immediately
+and batches live events for up to 100 ms. Close the returned session when
+collection ends. The calls use the usual API credentials and the 64-digit hex
 `x-asterisk-probe-token` from `proxy-ip-probe.token` in the command server's
 base directory or the standalone core's working directory. Events include the
 question, result and elapsed time, with source, upstream, route and UID when
-available. `uidSource` is `socket` when connection ownership supplies a UID.
+available. When `route.find_process` is enabled, events reuse connection
+ownership and report `uidSource: socket` when a UID is available.
 Delivery is best effort and events can be dropped under load.
 An event’s answer list is limited to 64 records or 8 KiB of uncompressed DNS record data.
 

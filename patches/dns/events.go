@@ -22,16 +22,16 @@ func BeginClientDNSEvent(ctx context.Context, router adapter.DNSRouter, request 
 	if !dnsevents.ObservationEnabled() {
 		return ctx, nil
 	}
-	provider, ok := router.(dnsevents.FeedProvider)
+	dnsRouter, ok := router.(*Router)
 	if !ok {
 		return ctx, nil
 	}
-	feed := provider.DNSEventFeed()
+	feed := dnsRouter.DNSEventFeed()
 	if !feed.Enabled() {
 		return ctx, nil
 	}
 	var uid *uint32
-	if owner := metadata.ProcessInfo; owner != nil && owner.UserId >= 0 {
+	if owner := metadata.ProcessInfo; dnsRouter.dnsEventFindProcess && owner != nil && owner.UserId >= 0 {
 		value := uint32(owner.UserId)
 		// A ROOT redirect can identify netd's socket as UID 0. It cannot
 		// tell a relayed resolver query from DNS sent directly by root.

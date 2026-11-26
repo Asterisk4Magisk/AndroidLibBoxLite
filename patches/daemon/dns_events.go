@@ -4,9 +4,11 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/androidcli/dnsevents"
@@ -53,30 +55,128 @@ func (s *dnsEventsServer) SubscribeDnsEvents(_ *emptypb.Empty, stream grpc.Serve
 	if !ok {
 		return status.Error(codes.Unimplemented, "DNS events are unavailable")
 	}
-	events, unsubscribe, ok := provider.DNSEventFeed().Subscribe()
+	history, events, unsubscribe, ok := provider.DNSEventFeed().Subscribe()
 	if !ok {
 		return status.Error(codes.Aborted, "service changed")
 	}
 	defer unsubscribe()
-	if err := stream.SendHeader(metadata.Pairs(dnsevents.VersionHeader, strconv.Itoa(dnsevents.Version))); err != nil {
+	headers := metadata.Pairs(dnsevents.VersionHeader, strconv.Itoa(dnsevents.Version))
+	formats := metadata.ValueFromIncomingContext(ctx, dnsevents.FormatHeader)
+	batched := len(formats) == 1 && formats[0] == dnsevents.FormatNDJSON
+	if batched {
+		headers.Set(dnsevents.FormatHeader, dnsevents.FormatNDJSON)
+	}
+	if err := stream.SendHeader(headers); err != nil {
 		return err
 	}
-	for {
-		select {
-		case <-ctx.Done():
+	// Returning from the handler closes the RPC and unblocks Send even if
+	// the client has stopped reading and exhausted its HTTP/2 window.
+	done := make(chan error, 1)
+	go func() {
+		done <- sendDNSEvents(ctx, instance.ctx, history, events, stream.Send, batched)
+	}()
+	select {
+	case <-ctx.Done():
+		return status.FromContextError(ctx.Err()).Err()
+	case <-instance.ctx.Done():
+		return status.Error(codes.Aborted, "service changed")
+	case err := <-done:
+		return err
+	}
+}
+
+func sendDNSEvents(ctx, instance context.Context, history []dnsevents.Event, events <-chan dnsevents.Event, send func(*wrapperspb.StringValue) error, batched bool) error {
+	const batchInterval = 100 * time.Millisecond
+	const maxBatchRecords = 64
+	const batchBytes = 64 * 1024
+
+	var batch bytes.Buffer
+	encoder := json.NewEncoder(&batch)
+	var timer *time.Timer
+	var flushAt <-chan time.Time
+	records := 0
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+	checkStream := func() error {
+		if ctx.Err() != nil {
 			return status.FromContextError(ctx.Err()).Err()
-		case <-instance.ctx.Done():
+		}
+		if instance.Err() != nil {
 			return status.Error(codes.Aborted, "service changed")
-		case event, ok := <-events:
-			if !ok || instance.ctx.Err() != nil {
-				return status.Error(codes.Aborted, "service changed")
+		}
+		return nil
+	}
+	flush := func() error {
+		if err := checkStream(); err != nil {
+			return err
+		}
+		if timer != nil {
+			timer.Stop()
+		}
+		flushAt = nil
+		err := send(wrapperspb.String(batch.String()))
+		batch.Reset()
+		records = 0
+		return err
+	}
+	writeEvent := func(event dnsevents.Event) error {
+		if !batched {
+			if err := checkStream(); err != nil {
+				return err
 			}
 			data, err := json.Marshal(event)
 			if err != nil {
 				return status.Error(codes.Internal, "encode DNS event")
 			}
-			if err := stream.Send(wrapperspb.String(string(data))); err != nil {
+			return send(wrapperspb.String(string(data)))
+		}
+		if err := encoder.Encode(event); err != nil {
+			return status.Error(codes.Internal, "encode DNS event")
+		}
+		records++
+		if records >= maxBatchRecords || batch.Len() >= batchBytes {
+			return flush()
+		}
+		return nil
+	}
+	for _, event := range history {
+		if err := writeEvent(event); err != nil {
+			return err
+		}
+	}
+	if records != 0 {
+		if err := flush(); err != nil {
+			return err
+		}
+	}
+	history = nil
+	for {
+		select {
+		case <-ctx.Done():
+			return status.FromContextError(ctx.Err()).Err()
+		case <-instance.Done():
+			return status.Error(codes.Aborted, "service changed")
+		case <-flushAt:
+			if err := flush(); err != nil {
 				return err
+			}
+		case event, ok := <-events:
+			if !ok {
+				return status.Error(codes.Aborted, "service changed")
+			}
+			if err := writeEvent(event); err != nil {
+				return err
+			}
+			if records == 1 {
+				if timer == nil {
+					timer = time.NewTimer(batchInterval)
+				} else {
+					timer.Reset(batchInterval)
+				}
+				flushAt = timer.C
 			}
 		}
 	}
