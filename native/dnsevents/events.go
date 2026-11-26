@@ -54,6 +54,9 @@ func (e Event) format() Event {
 		e.Answers = &answers
 	}
 	e.Upstream = e.origin.upstream()
+	if e.UID != nil {
+		e.UIDSource = "socket"
+	}
 	e.wireAnswers = nil
 	e.origin = Origin{}
 	return e
@@ -71,23 +74,9 @@ type Feed struct {
 	readers map[chan Event]struct{}
 }
 
-var observingFeeds struct {
-	sync.Mutex
-	count atomic.Int32
-}
+var observingFeeds atomic.Int32
 
-func ObservationEnabled() bool { return observingFeeds.count.Load() != 0 }
-
-func changeObservingFeeds(delta int32) {
-	observingFeeds.Lock()
-	defer observingFeeds.Unlock()
-	switch count := observingFeeds.count.Add(delta); {
-	case count == 0:
-		setEnhancedUIDObservation(false)
-	case count == 1 && delta > 0:
-		setEnhancedUIDObservation(true)
-	}
-}
+func ObservationEnabled() bool { return observingFeeds.Load() != 0 }
 
 func (f *Feed) Enabled() bool { return f != nil && f.queue.Load() != nil }
 
@@ -105,7 +94,7 @@ func (f *Feed) Subscribe() (<-chan Event, func(), bool) {
 	if f.queue.Load() == nil {
 		queue := newEventQueue()
 		f.queue.Store(queue)
-		changeObservingFeeds(1)
+		observingFeeds.Add(1)
 		go queue.run(f.publish)
 	}
 	return reader, func() {
@@ -131,7 +120,7 @@ func (f *Feed) Close() {
 
 func (f *Feed) stopQueue() {
 	if queue := f.queue.Swap(nil); queue != nil {
-		changeObservingFeeds(-1)
+		observingFeeds.Add(-1)
 		close(queue.done)
 	}
 }
@@ -165,13 +154,12 @@ type requestKey struct{}
 type attemptKey struct{}
 
 type Observation struct {
-	feed      *Feed
-	request   *D.Msg
-	start     time.Time
-	question  D.Question
-	uid       *uint32
-	uidSource string
-	queue     *eventQueue
+	feed     *Feed
+	request  *D.Msg
+	start    time.Time
+	question D.Question
+	uid      *uint32
+	queue    *eventQueue
 
 	mu     sync.Mutex
 	done   bool
@@ -180,13 +168,13 @@ type Observation struct {
 	others map[*D.Msg]Origin
 }
 
-func (f *Feed) Start(ctx context.Context, request *D.Msg, uid *uint32, uidSource string) (context.Context, *Observation) {
+func (f *Feed) Start(ctx context.Context, request *D.Msg, uid *uint32) (context.Context, *Observation) {
 	queue := f.queue.Load()
 	if queue == nil || len(request.Question) == 0 || request.Response || request.Opcode != D.OpcodeQuery {
 		return ctx, nil
 	}
 	o := &Observation{
-		feed: f, request: request, start: time.Now(), question: request.Question[0], uid: uid, uidSource: uidSource, queue: queue,
+		feed: f, request: request, start: time.Now(), question: request.Question[0], uid: uid, queue: queue,
 	}
 	return context.WithValue(ctx, requestKey{}, o), o
 }
@@ -282,7 +270,7 @@ func (o *Observation) Finish(response, wireResponse *D.Msg, err error) {
 	now := time.Now()
 	event := Event{
 		Time: now.UnixMilli(), Delay: now.Sub(o.start).Milliseconds(),
-		Qname: o.question.Name, Qtype: o.question.Qtype, Status: "failed", UID: o.uid, UIDSource: o.uidSource,
+		Qname: o.question.Name, Qtype: o.question.Qtype, Status: "failed", UID: o.uid,
 	}
 	switch {
 	case wireResponse != nil:

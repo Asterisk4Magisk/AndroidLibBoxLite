@@ -354,13 +354,9 @@ func TruncateDNSMessageWithEvent(request *dns.Msg, response *dns.Msg, frontHeadr
            '\tobservation.Finish(response, &compressedResponse, nil)')
 
     handle = 'protocol/dns/handle.go'
-    yield (handle, 'func HandleStreamDNSRequest(ctx context.Context, router adapter.DNSRouter, conn net.Conn, metadata adapter.InboundContext) error {',
-           'func HandleStreamDNSRequest(ctx context.Context, router adapter.DNSRouter, conn net.Conn, metadata adapter.InboundContext) error {\n'
-           '\treturn HandleStreamDNSRequestWithDestination(ctx, router, conn, metadata, metadata.Destination)\n}\n\n'
-           'func HandleStreamDNSRequestWithDestination(ctx context.Context, router adapter.DNSRouter, conn net.Conn, metadata adapter.InboundContext, destination M.Socksaddr) error {')
     yield (handle, '\tmetadataInQuery := metadata\n\trouter.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery),',
            '\tmetadataInQuery := metadata\n'
-           '\tctx, observation := dns.BeginClientDNSEvent(ctx, router, &message, &metadataInQuery, "tcp", destination.AddrPort(), buffer.Bytes())\n'
+           '\tctx, observation := dns.BeginClientDNSEvent(ctx, router, &message, &metadataInQuery)\n'
            '\trouter.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery),')
     yield handle, '\t\t\tconn.Close()\n\t\t\treturn', '\t\t\tobservation.Finish(nil, nil, err)\n\t\t\tconn.Close()\n\t\t\treturn'
     yield handle, 'go writeStreamResponse(conn, response)', 'go writeStreamResponse(conn, response, observation)'
@@ -371,12 +367,8 @@ func TruncateDNSMessageWithEvent(request *dns.Msg, response *dns.Msg, frontHeadr
            '\tobservation.Finish(response, &compressedResponse, nil)\n\tresponseBuffer.Truncate(len(n))')
 
     route = 'route/dns.go'
-    yield (route, '\tr.searchProcessInfo(ctx, &metadata)\n\tmetadata.Destination = M.Socksaddr{}\n',
-           '\tr.searchProcessInfo(ctx, &metadata)\n\tdestination := metadata.Destination\n\tmetadata.Destination = M.Socksaddr{}\n')
-    yield (route, 'dnsOutbound.HandleStreamDNSRequest(ctx, r.dns, conn, metadata)',
-           'dnsOutbound.HandleStreamDNSRequestWithDestination(ctx, r.dns, conn, metadata, destination)')
     yield (route, '\tr.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata),',
-           '\tctx, observation := dns.BeginClientDNSEvent(ctx, r.dns, &message, &metadata, "udp", destination.AddrPort(), payload)\n'
+           '\tctx, observation := dns.BeginClientDNSEvent(ctx, r.dns, &message, &metadata)\n'
            '\tr.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata),')
     yield (route, '\t\t\texchangeErr = r.writeDNSPacketResponse(&message, response, writer, destination)\n\t\t}',
            '\t\t\texchangeErr = r.writeDNSPacketResponse(&message, response, writer, destination, observation)\n'
@@ -395,24 +387,10 @@ def patch_dns_packet_handlers(core):
     split = text.index('func newDNSPacketConnection(', start)
     head = text[:start]
     anchor = 'func(response *mDNS.Msg, err error) {\n\t\t\t\tif err != nil {\n\t\t\t\t\tcancel(err)'
-    for index, section in enumerate((text[start:split], text[split:])):
-        unpack_error = '\t\t\t\tif err != nil {\n\t\t\t\t\tcancel(err)\n\t\t\t\t\treturn err\n\t\t\t\t}\n'
-        cached_unpack = '\t\t\t\terr = message.Unpack(packet.Buffer.Bytes())\n\t\t\t\tpacket.Buffer.Release()\n'
-        if index == 0:
-            section = replace_once(section, '\t\t\tvar err error\n', '\t\t\tvar err error\n\t\t\tvar buffer *buf.Buffer\n')
-            section = replace_once(section, cached_unpack + unpack_error, '\t\t\t\tbuffer = packet.Buffer\n')
-            section = replace_once(section, '\t\t\t\tbuffer := buf.NewPacket()\n', '\t\t\t\tbuffer = buf.NewPacket()\n')
-        else:
-            section = replace_once(section, cached_unpack, '\t\t\t\tbuffer = packet.Buffer\n')
-            section = replace_once(section, '\t\t\t\tN.PutPacketBuffer(packet)\n' + unpack_error,
-                                   '\t\t\t\tN.PutPacketBuffer(packet)\n')
-        section = replace_once(section, '\t\t\t\terr = message.Unpack(buffer.Bytes())\n\t\t\t\tbuffer.Release()\n' + unpack_error, '')
+    for section in (text[start:split], text[split:]):
         section = replace_once(section, '\t\t\tmetadataInQuery := metadata\n\t\t\trouter.ExchangeAsync(',
-                               '\t\t\terr = message.Unpack(buffer.Bytes())\n'
-                               '\t\t\tif err != nil {\n\t\t\t\tbuffer.Release()\n\t\t\t\tcancel(err)\n\t\t\t\treturn err\n\t\t\t}\n'
                                '\t\t\tmetadataInQuery := metadata\n'
-                               '\t\t\tctx, observation := dns.BeginClientDNSEvent(ctx, router, &message, &metadataInQuery, "udp", destination.AddrPort(), buffer.Bytes())\n'
-                               '\t\t\tbuffer.Release()\n'
+                               '\t\t\tctx, observation := dns.BeginClientDNSEvent(ctx, router, &message, &metadataInQuery)\n'
                                '\t\t\trouter.ExchangeAsync(')
         section = replace_once(section, anchor, anchor.replace('\t\t\t\t\tcancel(err)',
                                '\t\t\t\t\tobservation.Finish(nil, nil, err)\n\t\t\t\t\tcancel(err)'))

@@ -5,7 +5,6 @@ package dns
 
 import (
 	"context"
-	"net/netip"
 
 	mDNS "github.com/miekg/dns"
 	"github.com/sagernet/sing-box/adapter"
@@ -19,7 +18,7 @@ func (r *Router) DNSEventFeed() *dnsevents.Feed { return &r.dnsEvents }
 
 // BeginClientDNSEvent is called by DNS wire handlers. Internal router and
 // dialer lookups inherit context but do not start events of their own.
-func BeginClientDNSEvent(ctx context.Context, router adapter.DNSRouter, request *mDNS.Msg, metadata *adapter.InboundContext, network string, destination netip.AddrPort, wire []byte) (context.Context, *dnsevents.Observation) {
+func BeginClientDNSEvent(ctx context.Context, router adapter.DNSRouter, request *mDNS.Msg, metadata *adapter.InboundContext) (context.Context, *dnsevents.Observation) {
 	if !dnsevents.ObservationEnabled() {
 		return ctx, nil
 	}
@@ -32,24 +31,15 @@ func BeginClientDNSEvent(ctx context.Context, router adapter.DNSRouter, request 
 		return ctx, nil
 	}
 	var uid *uint32
-	var uidSource string
 	if owner := metadata.ProcessInfo; owner != nil && owner.UserId >= 0 {
 		value := uint32(owner.UserId)
 		// A ROOT redirect can identify netd's socket as UID 0. It cannot
 		// tell a relayed resolver query from DNS sent directly by root.
 		if value != 0 || !environment.IsCLI || !redirectedDNS(ctx, metadata) {
-			uid, uidSource = &value, "socket"
+			uid = &value
 		}
 	}
-	if environment.IsCLI {
-		if enhanced, found := dnsevents.EnhancedUID(network, metadata.Source.AddrPort(), destination, wire); found {
-			uid, uidSource = nil, ""
-			if enhanced != dnsevents.UnknownEnhancedUID {
-				uid, uidSource = &enhanced, "enhance"
-			}
-		}
-	}
-	return feed.Start(ctx, request, uid, uidSource)
+	return feed.Start(ctx, request, uid)
 }
 
 func redirectedDNS(ctx context.Context, metadata *adapter.InboundContext) bool {

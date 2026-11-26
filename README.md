@@ -50,9 +50,8 @@ ends. The calls use the usual API credentials and the 64-digit hex
 `x-asterisk-probe-token` from `proxy-ip-probe.token` in the command server's
 base directory or the standalone core's working directory. Events include the
 question, result and elapsed time, with source, upstream, route and UID when
-available. `uidSource` is `enhance` for the original UID from AsteriskEnhance
-or `socket` for connection ownership. In ROOT, a matching AsteriskEnhance
-UID takes precedence. Delivery is best effort and events can be dropped under load.
+available. `uidSource` is `socket` when connection ownership supplies a UID.
+Delivery is best effort and events can be dropped under load.
 An event’s answer list is limited to 64 records or 8 KiB of uncompressed DNS record data.
 
 ## ROOT system DNS integration
