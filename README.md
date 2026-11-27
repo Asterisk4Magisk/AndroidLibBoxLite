@@ -85,26 +85,6 @@ Protocols that ship as separate plugin APKs (Mieru, ShadowQUIC, ...) run as supe
 
 Upstream changes are limited to `closePlugins` calls in `CommandServer.Close`/`CloseService` and one line beside the system DNS hook in `cmd_run.go`. The supervisor lives in `native/pluginpool`. Host tests: `go test ./native/pluginpool` (process tests need Linux or Android).
 
-## Temporary REALITY compatibility
-
-The build aligns uTLS fingerprint names and selection rules with
-[Xray-core v26.10.21](https://github.com/XTLS/Xray-core/tree/1b1647cd9ddf0abc34b981d4611fc03bcac1ca74).
-`scripts/reality_compat.py` applies the dependency override and source patches
-only to staging; `patches/tls/reality_fingerprints.go` supplies the mappings.
-The fixed MetaCubeX uTLS revision is recorded in `go.mod` and `go.sum`.
-Native hybrid key shares are preserved, with hybrid X25519 authentication
-fallback when no standalone X25519 key is available. JNI and CLI share the fix.
-
-Use `chrome`, `firefox`, or `safari` for Xray 26.9.8+ servers. As in Xray, older
-presets and some random combinations can remain incompatible. The MetaCubeX
-TLS implementation and the core's advertised REALITY version are retained.
-The mapping's MPL-2.0 attribution and license are included in the AAR.
-
-When upstream supplies equivalent behavior, remove `REALITY_FILES` and
-`REALITY_PATCHES` from `prepare_sources.py`, the dependency/notice hooks from
-`build_shared.py`, and the uTLS replacement/checksums from `go.mod`/`go.sum`;
-then delete `scripts/reality_compat.py` and `patches/tls`.
-
 ## Updates and releases
 
 - `go.mod` pins the reF1nd source tag and SagerNet gomobile version; `go.sum` verifies downloads.

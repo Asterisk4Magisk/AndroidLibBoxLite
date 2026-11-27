@@ -16,6 +16,11 @@ import (
 
 func (r *Router) DNSEventFeed() *dnsevents.Feed { return &r.dnsEvents }
 
+// SetDNSEventFindProcess configures UID reporting before the router starts.
+func (r *Router) SetDNSEventFindProcess(enabled bool) {
+	r.dnsEventFindProcess = enabled
+}
+
 // BeginClientDNSEvent is called by DNS wire handlers. Internal router and
 // dialer lookups inherit context but do not start events of their own.
 func BeginClientDNSEvent(ctx context.Context, router adapter.DNSRouter, request *mDNS.Msg, metadata *adapter.InboundContext) (context.Context, *dnsevents.Observation) {

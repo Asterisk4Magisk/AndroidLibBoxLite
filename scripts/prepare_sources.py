@@ -6,8 +6,6 @@ import stat
 import subprocess
 from pathlib import Path
 
-from reality_compat import REALITY_FILES, REALITY_PATCHES
-
 ENVIRONMENT = 'github.com/sagernet/sing-box/common/androidcli'
 
 # Files injected verbatim into the staged upstream checkout as
@@ -17,7 +15,6 @@ ENVIRONMENT = 'github.com/sagernet/sing-box/common/androidcli'
 INJECTED_FILES = (
     ('patches/process/flow_owner.go', 'common/process/asterisk_flow_owner.go'),
     ('patches/protocol_socks/flow.go', 'protocol/socks/asterisk_flow.go'),
-    *REALITY_FILES,
     ('patches/daemon/proxy_ip_probe.go', 'daemon/proxy_ip_probe.go'),
     ('patches/daemon/dns_events.go', 'daemon/dns_events.go'),
     ('patches/daemon/dns_events.proto', 'daemon/dns_events.proto'),
@@ -70,18 +67,14 @@ def proxy_ip_patches():
         head = f'outbound := s.group.Unwrap(&metadata, true)\n\tif outbound == nil || !common.Contains(outbound.Network(), {network})'
         yield (balance, head, head.replace('Unwrap(&metadata, true)', 'dialOutbound(&metadata, readOnly)'))
 
-    for path, on_failure in (
-        (urltest, 's.group.history.DeleteURLTestHistory(outbound.Tag())'),
-        (balance, 's.OnConnectionFailure(ctx)'),
-    ):
+    for path in (urltest, balance):
         for method, args in (
             ('NewConn', 'conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsResourceDownloadFromContext(ctx)'),
             ('NewPacketConn', 'conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsResourceDownloadFromContext(ctx)'),
         ):
             head = 'if err == nil {\n\t\treturn s.group.interruptGroup.' + method + '(' + args + '), nil\n\t}'
-            failure = '\n\ts.logger.ErrorContext(ctx, err)\n\t' + on_failure
-            yield (path, head + failure,
-                   'if readOnly {\n\t\treturn conn, err\n\t}\n\t' + head + failure)
+            head += '\n\ts.logger.ErrorContext(ctx, err)'
+            yield (path, head, 'if readOnly {\n\t\treturn conn, err\n\t}\n\t' + head)
 
     for method, params, args, result in (
         ('DialContext', 'network string, destination M.Socksaddr', 'network, destination', 'net.Conn'),
@@ -123,32 +116,27 @@ func (g *LoadBalanceGroup) bindStrategy(pick func(*adapter.InboundContext, bool,
         anchor = f'\treturn func({strategy_args}) adapter.Outbound {{\n\t\t{first_line}'
         yield (balance, anchor, anchor.replace('return func(', 'return g.bindStrategy(func(')
                .replace('matcher outboundMatcher)', 'matcher outboundMatcher, readOnly bool)'))
-    yield (balance, 'func (g *LoadBalanceGroup) nextFallback(outbounds []adapter.Outbound, touch bool, matcher outboundMatcher)',
-           'func (g *LoadBalanceGroup) nextFallback(outbounds []adapter.Outbound, touch bool, matcher outboundMatcher, readOnly bool)')
+    next_fallback = 'func (g *LoadBalanceGroup) nextFallback(outbounds []adapter.Outbound, metadata *adapter.InboundContext, touch bool, matcher outboundMatcher)'
+    yield (balance, next_fallback, next_fallback.replace('matcher outboundMatcher)', 'matcher outboundMatcher, readOnly bool)'))
     yield (balance, 'if matcher == nil || touch {\n\t\tg.fallbackIdx.Store(nextIndex)',
            'if !readOnly && (matcher == nil || touch) {\n\t\tg.fallbackIdx.Store(nextIndex)')
-    yield (balance, 'return g.nextFallback(outbounds, touch, matcher)\n\t}\n}\n\nfunc strategyConsistentHashing',
-           'return g.nextFallback(outbounds, touch, matcher, readOnly)\n\t})\n}\n\nfunc strategyConsistentHashing')
-    yield (balance, 'return g.nextFallback(outbounds, touch, matcher)\n\t}\n}\n\nfunc strategyStickySessions',
-           'return g.nextFallback(outbounds, touch, matcher, readOnly)\n\t})\n}\n\nfunc strategyStickySessions')
-    yield (balance, 'if matcher == nil {\n\t\t\tidx, has = lruCache.Get(key)',
-           'if readOnly {\n\t\t\tidx, has = lruCache.PeekReadOnly(key)\n'
-           '\t\t} else if matcher == nil {\n\t\t\tidx, has = lruCache.Get(key)')
-    yield (balance, '''				if !validMapping || nowIdx != idx {
-					lruCache.Add(key, nowIdx)
-				} else if matcher != nil {
-					lruCache.Get(key)
-				}''',
-           '''				if !readOnly {
-					if !validMapping || nowIdx != idx {
-						lruCache.Add(key, nowIdx)
-					} else if matcher != nil {
-						lruCache.Get(key)
-					}
-				}''')
-    yield (balance, '\t\tlruCache.Add(key, fbIdx)',
-           '\t\tif !readOnly {\n\t\t\tlruCache.Add(key, fbIdx)\n\t\t}')
-    yield (balance, '\t\treturn outbounds[fbIdx]\n\t}\n}', '\t\treturn outbounds[fbIdx]\n\t})\n}')
+    for next_strategy in ('strategyConsistentHashing', 'strategyStickySessions'):
+        yield (balance, 'return g.nextFallback(outbounds, metadata, touch, matcher)\n\t}\n}\n\nfunc ' + next_strategy,
+               'return g.nextFallback(outbounds, metadata, touch, matcher, readOnly)\n\t})\n}\n\nfunc ' + next_strategy)
+    yield (balance, 'if matcher == nil {\n\t\t\tcachedTag, has = lruCache.Get(key)',
+           'if readOnly {\n\t\t\tcachedTag, has = lruCache.PeekReadOnly(key)\n'
+           '\t\t} else if matcher == nil {\n\t\t\tcachedTag, has = lruCache.Get(key)')
+    yield (balance, 'if matcher != nil {\n\t\t\t\tlruCache.Get(key)',
+           'if !readOnly && matcher != nil {\n\t\t\t\tlruCache.Get(key)')
+    for loop in ('for range attempts {\n\t\t\tproxy := outbounds[selectIndex(key, length)]',
+                 'for _, proxy := range outbounds {'):
+        anchor = (loop + '\n\t\t\tif g.aliveForMetadata(proxy, metadata) {\n'
+                  '\t\t\t\tmatched := matcher == nil || matcher(proxy)\n\t\t\t\tlruCache.Add(key, proxy.Tag())')
+        yield (balance, anchor, anchor.replace('\t\t\t\tlruCache.Add(key, proxy.Tag())',
+               '\t\t\t\tif !readOnly {\n\t\t\t\t\tlruCache.Add(key, proxy.Tag())\n\t\t\t\t}'))
+    yield (balance, '\t\tlruCache.Add(key, fbProxy.Tag())',
+           '\t\tif !readOnly {\n\t\t\tlruCache.Add(key, fbProxy.Tag())\n\t\t}')
+    yield (balance, '\t\treturn fbProxy\n\t}\n}', '\t\treturn fbProxy\n\t})\n}')
 
 
 def dns_event_patches():
@@ -176,11 +164,8 @@ def dns_event_patches():
 
     router = 'dns/router.go'
     yield router, 'type Router struct {', 'type Router struct {\n\tdnsEvents dnsevents.Feed\n\tdnsEventFindProcess bool'
-    yield (router, 'options option.DNSOptions) (*Router, error)',
-           'options option.DNSOptions, findProcess bool) (*Router, error)')
-    yield router, 'router := &Router{', 'router := &Router{\n\t\tdnsEventFindProcess: findProcess,'
-    yield ('box.go', 'dns.NewRouter(ctx, logFactory, dnsOptions)',
-           'dns.NewRouter(ctx, logFactory, dnsOptions, routeOptions.FindProcess)')
+    register_router = '\tservice.MustRegister[adapter.DNSRouter](ctx, dnsRouter)'
+    yield 'box.go', register_router, '\tdnsRouter.SetDNSEventFindProcess(routeOptions.FindProcess)\n' + register_router
     yield router, '\t\tmonitor.Start("initialize DNS client")', (
         '\t\tr.dnsEvents.StartCollection()\n\t\tmonitor.Start("initialize DNS client")'
     )
@@ -189,16 +174,17 @@ def dns_event_patches():
            '\t\tdnsevents.ForRequest(ctx, message).Record(earlyResponse, dnsevents.Origin{Source: "local"})\n'
            '\t\tcallback(earlyResponse, err)\n\t\treturn')
     for ending in ('\n\t\t})', '\n\t\t}()'):
-        call = 'r.finishExchangeAsync(message, transport, response, exchangeErr, callback)' + ending
+        call = 'r.finishExchangeAsync(message, options, transport, response, exchangeErr, callback)' + ending
         yield router, call, call.replace('Async(message', 'Async(ctx, message')
-    yield (router, 'r.finishExchangeAsync(message, result.transport,',
-           'r.finishExchangeAsync(ctx, message, result.transport,')
+    yield (router, 'r.finishExchangeAsync(message, options, result.transport,',
+           'r.finishExchangeAsync(ctx, message, options, result.transport,')
     yield (router, 'func (r *Router) finishExchangeAsync(message *mDNS.Msg,',
            'func (r *Router) finishExchangeAsync(ctx context.Context, message *mDNS.Msg,')
-    yield (router, '\tr.recordReverseMapping(message, response, transport)\n\tcallback(response, nil)',
+    anchor = '\tif !options.DisableReverseMapping {\n\t\tr.recordReverseMapping(message, response, transport)\n\t}\n\tcallback(response, nil)'
+    yield (router, anchor,
            '\tif transport == nil {\n'
            '\t\tdnsevents.ForRequest(ctx, message).Record(response, dnsevents.Origin{Source: "local"})\n'
-           '\t}\n\tr.recordReverseMapping(message, response, transport)\n\tcallback(response, nil)')
+           '\t}\n' + anchor)
 
     client = 'dns/client.go'
     yield (client, '\t"github.com/sagernet/sing-box/adapter"\n',
@@ -319,7 +305,7 @@ func newRemoteDialer(ctx context.Context, options option.RemoteDNSServerOptions,
             yield path, 'tls.NewDialer(dialer, tlsConfig)', 'tls.NewDialer(dialerInstance, tlsConfig)'
         anchor = 't.multiplexer = newQueryMultiplexer(queryMultiplexerOptions{'
         yield path, anchor, anchor + '\n\t\ttraceDNSEgress: dialer.TracesDNSEgress(dialerInstance),'
-    yield mux, '\treadEpoch atomic.Uint64', '\treadEpoch atomic.Uint64\n\tdnsEventEgress dnsevents.Egress'
+    yield mux, '\treadEpoch   atomic.Uint64', '\treadEpoch   atomic.Uint64\n\tdnsEventEgress dnsevents.Egress'
     yield mux, '\tretryCtx    context.Context', '\tretryCtx    context.Context\n\tdnsEvent *dnsevents.Observation'
     for fn in (
         'exchangeSingle(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error))',
@@ -358,21 +344,23 @@ func newRemoteDialer(ctx context.Context, options option.RemoteDNSServerOptions,
 func TruncateDNSMessageWithEvent(request *dns.Msg, response *dns.Msg, frontHeadroom int, rearHeadroom int, observation *dnsevents.Observation) (*buf.Buffer, error) {''')
     yield (truncate, '\t\tbuffer.Release()\n\t\treturn nil, err', '\t\tbuffer.Release()\n'
            '\t\tobservation.Finish(response, nil, err)\n\t\treturn nil, err')
-    yield (truncate, '\tbuffer.Truncate(len(rawMessage))', '\tbuffer.Truncate(len(rawMessage))\n'
-           '\tobservation.Finish(response, &compressedResponse, nil)')
+    yield (truncate, '\tcommon.Must1(buffer.Write(rawMessage))', '\tcommon.Must1(buffer.Write(rawMessage))\n'
+           '\tobservation.Finish(response, compressedResponse, nil)')
 
     handle = 'protocol/dns/handle.go'
-    yield (handle, '\tmetadataInQuery := metadata\n\trouter.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery),',
-           '\tmetadataInQuery := metadata\n'
-           '\tctx, observation := dns.BeginClientDNSEvent(ctx, router, &message, &metadataInQuery)\n'
-           '\trouter.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery),')
-    yield handle, '\t\t\tconn.Close()\n\t\t\treturn', '\t\t\tobservation.Finish(nil, nil, err)\n\t\t\tconn.Close()\n\t\t\treturn'
-    yield handle, 'go writeStreamResponse(conn, response)', 'go writeStreamResponse(conn, response, observation)'
-    yield (handle, 'func writeStreamResponse(conn net.Conn, response *mDNS.Msg) {',
-           'func writeStreamResponse(conn net.Conn, response *mDNS.Msg, observation *dnsevents.Observation) {')
-    yield (handle, '\tif err != nil {\n\t\treturn\n\t}\n\tresponseBuffer.Truncate(len(n))',
+    yield (handle, '\t\tmetadataInQuery := metadata\n\t\trouter.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery),',
+           '\t\tmetadataInQuery := metadata\n'
+           '\t\tctx, observation := dns.BeginClientDNSEvent(ctx, router, &message, &metadataInQuery)\n'
+           '\t\trouter.ExchangeAsync(adapter.WithContext(ctx, &metadataInQuery),')
+    yield (handle, '\t\t\t\tconn.Close()\n\t\t\t\treturn',
+           '\t\t\t\tobservation.Finish(nil, nil, err)\n\t\t\t\tconn.Close()\n\t\t\t\treturn')
+    yield (handle, 'go writeStreamResponse(conn, &writeAccess, response)',
+           'go writeStreamResponse(conn, &writeAccess, response, observation)')
+    yield (handle, 'func writeStreamResponse(conn net.Conn, writeAccess *sync.Mutex, response *mDNS.Msg) {',
+           'func writeStreamResponse(conn net.Conn, writeAccess *sync.Mutex, response *mDNS.Msg, observation *dnsevents.Observation) {')
+    yield (handle, '\tif err != nil {\n\t\treturn\n\t}\n\tcommon.Must1(responseBuffer.Write(rawMessage))',
            '\tif err != nil {\n\t\tobservation.Finish(response, nil, err)\n\t\treturn\n\t}\n'
-           '\tobservation.Finish(response, &compressedResponse, nil)\n\tresponseBuffer.Truncate(len(n))')
+           '\tobservation.Finish(response, compressedResponse, nil)\n\tcommon.Must1(responseBuffer.Write(rawMessage))')
 
     route = 'route/dns.go'
     yield (route, '\tr.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata),',
@@ -444,7 +432,6 @@ PATCHES = (
         'func (r *Router) searchProcessInfo(ctx context.Context, metadata *adapter.InboundContext) {\n'
         '\tif metadata.ProcessInfo != nil && r.network != nil {\n\t\tprocess.CompleteFlowOwner(metadata.ProcessInfo, r.network.PackageManager())\n\t}\n',
     ),
-    *REALITY_PATCHES,
     *proxy_ip_patches(),
     *dns_event_patches(),
     (
