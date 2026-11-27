@@ -81,9 +81,22 @@ func answerData(record D.RR) string {
 			return "::ffff:" + record.AAAA.String()
 		}
 		return record.AAAA.String()
-	default:
-		return strings.TrimSpace(strings.TrimPrefix(record.String(), record.Header().String()))
+	case *D.TXT:
+		if len(record.Txt) == 1 && isPlainTXT(record.Txt[0]) {
+			return "\"" + record.Txt[0] + "\""
+		}
 	}
+	return strings.TrimSpace(strings.TrimPrefix(record.String(), record.Header().String()))
+}
+
+func isPlainTXT(text string) bool {
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if c < ' ' || c > '~' || c == '"' || c == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 type FeedProvider interface {
